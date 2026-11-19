@@ -168,7 +168,7 @@ function TelegramTile({ tg, setTg, groupsHref, hasExchange, configured }) {
             <li>End the login any time, here or in Telegram → Devices.</li>
           </ul>
           <button className="btn btn-ink" type="button" onClick={() => setOpen(true)}>Connect Telegram</button>
-          {!hasExchange && <span className="hint">You will need a connected exchange before the bot can trade your signals.</span>}
+          {!hasExchange && <span className="hint">Connect Binance or KuCoin above first; Telegram comes next.</span>}
           {!configured && <span className="hint">Telegram sign-in opens as soon as it is switched on for Copixio.</span>}
         </div>
       ) : (

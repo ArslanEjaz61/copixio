@@ -1,108 +1,123 @@
+import Link from "next/link";
 import { db } from "@/lib/db";
-import { Exchange, Group, Telegram, Trade, planOf } from "@/lib/models";
+import { Exchange, Group, Signal, Telegram, Trade, planOf, PLANS } from "@/lib/models";
 import { currentUser } from "@/lib/auth";
-import ResendVerify from "@/components/app/ResendVerify";
 
 export const dynamic = "force-dynamic";
 
-const usd = (n) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(2)} USDT`;
+const PERIODS = [["today", "Today"], ["7d", "7 days"], ["30d", "30 days"], ["all", "All time"]];
+const sinceOf = (p) => (p === "today" ? new Date(new Date().setUTCHours(0, 0, 0, 0)) : p === "7d" ? new Date(Date.now() - 7 * 864e5) : p === "30d" ? new Date(Date.now() - 30 * 864e5) : new Date(0));
+const money = (n) => `${n >= 0 ? "+" : "−"}${Math.abs(n || 0).toFixed(2)}`;
+const px = (x) => (x === null || x === undefined ? "–" : Number(Number(x).toPrecision(6)));
 
-// One clear next step while setting up; once the bot runs, today's money and the open trades.
+// The dashboard is numbers only: results for the chosen period, what is open now, and how each group performs.
 export default async function Dashboard({ searchParams }) {
   const user = await currentUser();
-  const { welcome } = await searchParams;
+  const { p = "30d" } = await searchParams;
+  const period = PERIODS.some(([k]) => k === p) ? p : "30d";
+  const since = sinceOf(period);
   await db();
-  const [exCount, tg, groupsOn] = await Promise.all([
-    Exchange.countDocuments({ userId: user._id, status: "ok" }),
-    Telegram.findOne({ userId: user._id, status: "connected" }, { _id: 1 }).lean(),
-    Group.countDocuments({ userId: user._id, enabled: true, exchangeId: { $ne: null } }),
-  ]);
-  const plan = planOf(user);
-  const steps = [
-    { key: "ex", title: "Connect your exchange", done: exCount > 0, href: "/app/connections", text: "Add a Binance or KuCoin API key that can trade but not withdraw. A Binance demo key works too." },
-    { key: "tg", title: "Connect Telegram", done: !!tg, href: "/app/connections", text: "Sign in with your phone number so Copixio can read the signal groups you pick." },
-    { key: "gr", title: "Pick groups and set rules", done: groupsOn > 0, href: "/app/groups", text: "Choose the groups to trade and set the size, stop loss and limits for each one." },
-  ];
-  const next = steps.find((s) => !s.done);
-  const ready = !next;
 
-  const dayStart = new Date(new Date().setUTCHours(0, 0, 0, 0));
-  const [open, closedToday] = ready
-    ? await Promise.all([
-        Trade.find({ userId: user._id, status: { $in: ["opening", "open", "closing"] } }).sort({ createdAt: -1 }).limit(20).lean(),
-        Trade.find({ userId: user._id, status: "closed", closedAt: { $gte: dayStart } }, { pnlUsdt: 1 }).lean(),
-      ])
-    : [[], []];
-  const pnl = closedToday.reduce((a, t) => a + (t.pnlUsdt || 0), 0);
-  const first = (user.name || "").split(" ")[0];
-  const mailOn = !!process.env.SMTP_HOST;
+  const [closed, open, groups, exchanges, tg, signals] = await Promise.all([
+    Trade.find({ userId: user._id, status: "closed", closedAt: { $gte: since } }, { pnlUsdt: 1, groupId: 1, base: 1, outcome: 1, closedAt: 1, costUsdt: 1, exchange: 1 }).sort({ closedAt: -1 }).lean(),
+    Trade.find({ userId: user._id, status: { $in: ["opening", "open", "closing"] } }).sort({ createdAt: -1 }).lean(),
+    Group.find({ userId: user._id }, { title: 1, kind: 1, enabled: 1 }).lean(),
+    Exchange.find({ userId: user._id }, { exchange: 1, env: 1, status: 1 }).lean(),
+    Telegram.findOne({ userId: user._id, status: "connected" }, { _id: 1 }).lean(),
+    Signal.aggregate([{ $match: { userId: user._id, createdAt: { $gte: since } } }, { $group: { _id: "$outcome", n: { $sum: 1 } } }]),
+  ]);
+
+  const pnl = closed.reduce((a, t) => a + (t.pnlUsdt || 0), 0);
+  const won = closed.filter((t) => t.pnlUsdt > 0).length, lost = closed.filter((t) => t.pnlUsdt <= 0).length;
+  const rate = closed.length ? Math.round((won / closed.length) * 100) : 0;
+  const best = closed.reduce((m, t) => (t.pnlUsdt > (m?.pnlUsdt ?? -Infinity) ? t : m), null);
+  const worst = closed.reduce((m, t) => (t.pnlUsdt < (m?.pnlUsdt ?? Infinity) ? t : m), null);
+  const sig = Object.fromEntries(signals.map((s) => [s._id, s.n]));
+  const signalsSeen = signals.reduce((a, s) => a + s.n, 0);
+  const channels = groups.filter((g) => g.kind === "channel").length, grps = groups.length - channels, trading = groups.filter((g) => g.enabled).length;
+
+  const byGroup = new Map(groups.map((g) => [String(g._id), { title: g.title, enabled: g.enabled, trades: 0, won: 0, lost: 0, pnl: 0 }]));
+  for (const t of closed) {
+    const r = byGroup.get(String(t.groupId));
+    if (!r) continue;
+    r.trades++; r.pnl += t.pnlUsdt || 0; if (t.pnlUsdt > 0) r.won++; else r.lost++;
+  }
+  const groupRows = [...byGroup.values()].sort((a, b) => b.pnl - a.pnl || b.trades - a.trades);
+  const gName = (id) => byGroup.get(String(id))?.title || "–";
+  const plan = planOf(user);
+  const conn = (k) => exchanges.find((x) => x.exchange === k && x.status === "ok");
 
   return (
     <>
       <div className="ap-top">
-        <div>
-          <h1>{welcome ? `Welcome${first ? `, ${first}` : ""}` : "Dashboard"}</h1>
-          <p>{ready ? (user.botPaused ? "The bot is paused. No new trades are placed." : plan === "none" ? "Setup is done. Choose a plan to switch the bot on." : "The bot is reading your groups.") : `Step ${steps.indexOf(next) + 1} of 3 to get the bot trading.`}</p>
-        </div>
+        <div><h1>Dashboard</h1><p>{user.botPaused ? "The bot is paused: no new trades are placed." : plan === "none" ? "No plan is active, so the bot is not placing trades." : `${PLANS[plan].name} plan · the bot is reading ${trading} group${trading === 1 ? "" : "s"}.`}</p></div>
+        <nav className="seg" aria-label="Period">
+          {PERIODS.map(([k, l]) => <Link key={k} href={`/app?p=${k}`} className={period === k ? "on" : ""} style={{ padding: "8px 14px", textDecoration: "none", fontWeight: 600, borderLeft: k === "today" ? 0 : "1px solid var(--line-2)", background: period === k ? "var(--ink)" : "var(--surface)", color: period === k ? "var(--on-ink)" : "var(--text)" }}>{l}</Link>)}
+        </nav>
       </div>
 
-      {mailOn && !user.emailVerifiedAt && (
-        <div className="note info" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <span>Confirm your email: we sent a link to {user.email}.</span><ResendVerify />
-        </div>
-      )}
+      <section className="panel"><div className="kpis kpis-5">
+        <div><span className="lab">Net result</span><b className={`num ${pnl >= 0 ? "pos" : "neg"}`}>{money(pnl)} USDT</b></div>
+        <div><span className="lab">Trades closed</span><b className="num">{closed.length}</b></div>
+        <div><span className="lab">Won</span><b className="num pos">{won}</b></div>
+        <div><span className="lab">Lost</span><b className="num neg">{lost}</b></div>
+        <div><span className="lab">Win rate</span><b className="num">{rate}%</b></div>
+      </div></section>
 
-      {!ready && (
+      <section className="panel"><div className="kpis kpis-5">
+        <div><span className="lab">Open now</span><b className="num">{open.length}</b></div>
+        <div><span className="lab">Groups · channels</span><b className="num">{grps} · {channels}</b></div>
+        <div><span className="lab">Trading</span><b className="num">{trading}</b></div>
+        <div><span className="lab">Signals read</span><b className="num">{signalsSeen}</b><span className="hint">{sig.traded || 0} traded · {sig.skipped || 0} skipped</span></div>
+        <div><span className="lab">Best · worst</span><b className="num" style={{ fontSize: "1rem" }}><span className="pos">{best ? `${money(best.pnlUsdt)} ${best.base}` : "–"}</span><br /><span className="neg">{worst ? `${money(worst.pnlUsdt)} ${worst.base}` : "–"}</span></b></div>
+      </div></section>
+
+      <div className="dash-grid">
         <section className="panel">
-          <div className="next-card">
-            <div><h2>{next.title}</h2><p>{next.text}</p></div>
-            <a className="btn btn-cta" href={next.href}>{next.key === "ex" ? "Connect exchange" : next.key === "tg" ? "Connect Telegram" : "Choose groups"}</a>
-          </div>
-          <nav className="progress" aria-label="Setup steps">
-            {steps.map((s, i) => (
-              <a key={s.key} href={s.href}>
-                <span className={`st${s.done ? " done" : s === next ? " now" : ""}`}>{s.done ? "✓ DONE" : s === next ? `STEP ${i + 1} · NOW` : `STEP ${i + 1}`}</span>
-                <b>{s.title}</b>
-              </a>
-            ))}
-          </nav>
+          <div className="panel-h"><h2>Open trades</h2><Link className="btn-text" href="/app/trades">All trades</Link></div>
+          {open.length === 0 ? <div className="empty"><b>No open trades</b><span>New trades appear here seconds after a signal is placed.</span></div> : (
+            <div className="tbl"><table style={{ minWidth: 520 }}>
+              <thead><tr><th>Coin</th><th>Group</th><th className="r">Size</th><th className="r">Entry</th><th className="r">Stop</th></tr></thead>
+              <tbody>{open.slice(0, 10).map((t) => (
+                <tr key={String(t._id)}><td><b>{t.base}</b><div className="hint">{t.exchange === "binance" ? "Binance" : "KuCoin"}</div></td><td>{gName(t.groupId)}</td>
+                  <td className="r num">{(t.costUsdt || 0).toFixed(2)}</td><td className="r num">{px(t.entryPrice)}</td><td className="r num neg">{px(t.stopPrice)}</td></tr>))}
+              </tbody></table></div>
+          )}
         </section>
-      )}
 
-      {ready && plan === "none" && (
-        <section className="panel"><div className="next-card">
-          <div><h2>Choose a plan to switch the bot on</h2><p>Your exchange, Telegram and groups are ready. The bot starts placing trades as soon as a plan is active.</p></div>
-          <a className="btn btn-cta" href="/app/billing">Choose a plan</a>
-        </div></section>
-      )}
+        <section className="panel">
+          <div className="panel-h"><h2>Accounts</h2><Link className="btn-text" href="/app/connections">Manage</Link></div>
+          <ul className="rows">
+            {[["Binance", conn("binance")], ["KuCoin", conn("kucoin")], ["Telegram", tg]].map(([n, ok]) => (
+              <li key={n}><b>{n}</b>{ok ? <span className="pill ok">{n !== "Telegram" && ok.env === "demo" ? "Connected · demo" : "Connected"}</span> : <span className="pill info">Not connected</span>}</li>
+            ))}
+            <li><b>Plan</b>{plan === "none" ? <Link className="pill wait" href="/app/billing" style={{ textDecoration: "none" }}>No plan</Link> : <span className="pill ok">{PLANS[plan].name} · until {new Date(user.planUntil).toISOString().slice(0, 10)}</span>}</li>
+          </ul>
+        </section>
+      </div>
 
-      {ready && (
-        <>
-          <section className="panel">
-            <div className="kpis">
-              <div><span className="lab">Today</span><b className={`num ${pnl >= 0 ? "pos" : "neg"}`}>{usd(pnl)}</b></div>
-              <div><span className="lab">Closed today</span><b className="num">{closedToday.length}</b></div>
-              <div><span className="lab">Open now</span><b className="num">{open.length}</b></div>
-              <div><span className="lab">Groups trading</span><b className="num">{groupsOn}</b></div>
-            </div>
-          </section>
-          <section className="panel">
-            <div className="panel-h"><h2>Open trades</h2><a className="btn-text" href="/app/trades">All trades</a></div>
-            {open.length === 0 ? (
-              <div className="empty"><b>No open trades</b><span>A trade appears here seconds after one of your groups posts a signal that fits its rules.</span></div>
-            ) : (
-              <ul className="rows">
-                {open.map((t) => (
-                  <li key={String(t._id)}>
-                    <div className="row-main"><b>{t.base || t.symbol}</b><span className="hint">{t.exchange === "binance" ? "Binance" : "KuCoin"} · entry <span className="num">{t.entryPrice ?? "…"}</span> · stop <span className="num">{t.stopPrice ?? "…"}</span></span></div>
-                    <div className="row-side"><span className="num">{(t.costUsdt || 0).toFixed(2)} USDT</span><span className={`pill ${t.status === "open" ? "wait" : "info"}`}>{t.status === "open" ? "Open" : t.status === "opening" ? "Opening" : "Closing"}</span></div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        </>
-      )}
+      <section className="panel">
+        <div className="panel-h"><h2>Results by group</h2><Link className="btn-text" href="/app/groups">Signal groups</Link></div>
+        {groupRows.length === 0 ? <div className="empty"><b>No groups yet</b><span>Groups you follow show their trades, wins, losses and result here.</span></div> : (
+          <div className="tbl"><table style={{ minWidth: 560 }}>
+            <thead><tr><th>Group</th><th className="r">Trades</th><th className="r">Won</th><th className="r">Lost</th><th className="r">Win rate</th><th className="r">Result (USDT)</th><th>Status</th></tr></thead>
+            <tbody>{groupRows.map((r) => (
+              <tr key={r.title}><td><b>{r.title}</b></td><td className="r num">{r.trades}</td><td className="r num pos">{r.won}</td><td className="r num neg">{r.lost}</td>
+                <td className="r num">{r.trades ? Math.round((r.won / r.trades) * 100) : 0}%</td><td className={`r num ${r.pnl >= 0 ? "pos" : "neg"}`}>{money(r.pnl)}</td>
+                <td>{r.enabled ? <span className="pill ok">Trading</span> : <span className="pill info">Off</span>}</td></tr>))}
+            </tbody></table></div>
+        )}
+      </section>
+
+      <section className="panel">
+        <div className="panel-h"><h2>Recently closed</h2></div>
+        {closed.length === 0 ? <div className="empty"><b>No closed trades in this period</b></div> : (
+          <ul className="rows">{closed.slice(0, 8).map((t) => (
+            <li key={String(t._id)}><div className="row-main"><b>{t.base}</b><span className="hint">{gName(t.groupId)} · {new Date(t.closedAt).toISOString().slice(5, 16).replace("T", " ")} UTC</span></div>
+              <div className="row-side"><span className={`pill ${t.pnlUsdt >= 0 ? "ok" : "bad"}`}>{t.outcome}</span><b className={`num ${t.pnlUsdt >= 0 ? "pos" : "neg"}`}>{money(t.pnlUsdt)}</b></div></li>))}
+          </ul>
+        )}
+      </section>
     </>
   );
 }

@@ -160,8 +160,6 @@ function TelegramTile({ tg, setTg, groupsHref, hasExchange, configured }) {
           </li></ul>
           <div className="tile-f"><a className="btn btn-ink" href={groupsHref}>Choose signal groups</a></div>
         </>
-      ) : !configured ? (
-        <div className="tile-f"><p className="hint">Telegram sign-in is being set up on our side. It will be available shortly.</p></div>
       ) : !open ? (
         <div className="tile-f">
           <ul className="trust-list">
@@ -169,8 +167,9 @@ function TelegramTile({ tg, setTg, groupsHref, hasExchange, configured }) {
             <li>Copixio never sends a message from your account.</li>
             <li>End the login any time, here or in Telegram → Devices.</li>
           </ul>
-          <button className="btn btn-ink" type="button" disabled={!hasExchange} onClick={() => setOpen(true)}>Connect Telegram</button>
-          {!hasExchange && <span className="hint">Connect an exchange first.</span>}
+          <button className="btn btn-ink" type="button" onClick={() => setOpen(true)}>Connect Telegram</button>
+          {!hasExchange && <span className="hint">You will need a connected exchange before the bot can trade your signals.</span>}
+          {!configured && <span className="hint">Telegram sign-in opens as soon as it is switched on for Copixio.</span>}
         </div>
       ) : (
         <div className="tile-form">

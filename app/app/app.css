@@ -47,3 +47,60 @@
   .kpis > div:nth-child(3) { border-left: 0; }
   .kpis > div:nth-child(n+3) { border-top: 1px solid var(--line); }
 }
+
+/* lists, forms and controls inside the app */
+.mono { font-family: var(--font-mono); }
+.btn.sm { padding: 7px 12px; font-size: .9rem; }
+.btn-text { background: none; border: 0; padding: 6px 4px; color: var(--text); font: 600 .95rem var(--font-body); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.btn-text[disabled] { opacity: .45; cursor: not-allowed; }
+.btn-text.danger { color: var(--loss); }
+.rows { margin: 0; padding: 0; }
+.rows > li { list-style: none; display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.rows > li:last-child { border-bottom: 0; }
+.row-main { display: grid; gap: 2px; min-width: 0; }
+.row-side { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; background: var(--surface); color: var(--text); padding: 8px 14px; font: 600 .92rem var(--font-body); cursor: pointer; border-left: 1px solid var(--line-2); }
+.seg button:first-child { border-left: 0; }
+.seg button.on { background: var(--ink); color: var(--on-ink); }
+.split-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.form-col { padding: 20px; display: grid; gap: 16px; align-content: start; }
+.actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.guide { padding: 20px; background: var(--paper); border-left: 1px solid var(--line); display: grid; gap: 14px; align-content: start; }
+.guide-h { background: none; border: 0; padding: 0; text-align: left; font: 700 1rem var(--font-display); color: var(--text); cursor: pointer; display: flex; justify-content: space-between; gap: 12px; }
+.guide ol { margin: 0; padding-left: 20px; display: grid; gap: 8px; color: var(--muted); }
+.ipbox { display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 1px dashed var(--line-2); border-radius: 6px; padding: 10px 12px; background: var(--surface); }
+.next-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: center; padding: 24px; }
+.next-card h2 { font-size: 1.35rem; font-weight: 700; }
+.next-card p { color: var(--muted); margin-top: 6px; max-width: 40rem; }
+.progress { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); }
+.progress > a { padding: 14px 20px; border-left: 1px solid var(--line); text-decoration: none; display: grid; gap: 2px; }
+.progress > a:first-child { border-left: 0; }
+.progress .st { font: 600 .78rem var(--font-mono); color: var(--muted); }
+.progress .st.done { color: var(--profit); }
+.progress .st.now { color: var(--brass-ink); }
+.form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 16px; }
+.check { display: flex; gap: 10px; align-items: center; font-weight: 600; }
+.check input { width: 18px; height: 18px; accent-color: var(--ink); }
+@media (max-width: 900px) {
+  .split-form { grid-template-columns: 1fr; }
+  .guide { border-left: 0; border-top: 1px solid var(--line); }
+  .next-card { grid-template-columns: 1fr; }
+  .progress { grid-template-columns: 1fr; }
+  .progress > a { border-left: 0; border-top: 1px solid var(--line); }
+  .form-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 520px) { .form-grid { grid-template-columns: 1fr; } }
+.tbl { overflow-x: auto; }
+.tbl table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: .94rem; }
+.tbl th { font: 600 .72rem var(--font-body); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); text-align: left; padding: 10px 14px; background: var(--paper); border-bottom: 1px solid var(--line); }
+.tbl td { padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.tbl tr:last-child td { border-bottom: 0; }
+.tbl .r { text-align: right; }
+.plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; padding: 20px; }
+.plan { border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: grid; gap: 12px; align-content: start; }
+.plan.on { border-color: var(--ink); box-shadow: var(--shadow); }
+.plan .price { font: 700 2rem var(--font-display); }
+.plan .price small { font: 500 .95rem var(--font-body); color: var(--muted); }
+.plan ul { margin: 0; padding-left: 18px; color: var(--muted); display: grid; gap: 4px; }
+@media (max-width: 900px) { .plans { grid-template-columns: 1fr; } }

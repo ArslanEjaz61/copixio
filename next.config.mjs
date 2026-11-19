@@ -9,6 +9,8 @@ const securityHeaders = [
 
 const nextConfig = {
   poweredByHeader: false,
+  // GramJS and mongoose run as plain Node modules on the server (not bundled)
+  serverExternalPackages: ["telegram", "mongoose", "ioredis"],
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

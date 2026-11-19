@@ -1,17 +1,16 @@
-import ComingNext from "@/components/app/ComingNext";
+import { currentUser } from "@/lib/auth";
+import SettingsClient from "@/components/app/SettingsClient";
 
 export const metadata = { title: "Settings" };
+export const dynamic = "force-dynamic";
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  const user = await currentUser();
   return (
-    <ComingNext
-      title="Settings"
-      lead="Your account, security and notifications."
-      points={[
-        "Change your name, email and password.",
-        "Turn on two-factor sign-in with an authenticator app.",
-        "Choose which Telegram messages the bot sends you: entries, exits, daily summary.",
-      ]}
-    />
+    <>
+      <div className="ap-top"><div><h1>Settings</h1><p>The bot switch, notifications and your account.</p></div></div>
+      <SettingsClient name={user.name || ""} email={user.email} paused={!!user.botPaused} notifyOn={!!user.notifyChatId}
+        notifyAvailable={!!(process.env.TG_BOT_TOKEN && process.env.TG_BOT_USERNAME)} />
+    </>
   );
 }

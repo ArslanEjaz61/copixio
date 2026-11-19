@@ -10,11 +10,11 @@ export const NAV = [
   ["/app/settings", "Settings"],
 ];
 
-export function AppNav({ className = "ap-nav" }) {
+export function AppNav({ className = "ap-nav", admin = false }) {
   const path = usePathname();
   return (
     <nav className={className} aria-label="App">
-      {NAV.map(([href, label]) => (
+      {(admin ? [...NAV, ["/app/admin", "Admin"]] : NAV).map(([href, label]) => (
         <a key={href} href={href} aria-current={path === href ? "page" : undefined}>{label}</a>
       ))}
     </nav>

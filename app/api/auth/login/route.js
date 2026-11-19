@@ -31,6 +31,8 @@ export async function POST(req) {
   if (!user || !good) return NextResponse.json({ error: WRONG }, { status: 401 });
 
   user.lastLoginAt = new Date();
+  // the admin role is never granted here: it is set on the server with scripts/make-admin.mjs (an email that anyone
+  // could register first must not become admin by itself)
   await user.save();
   await createSession(user._id);
   return NextResponse.json({ ok: true });

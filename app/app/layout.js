@@ -14,7 +14,7 @@ export default async function AppLayout({ children }) {
     <div className="ap">
       <aside className="ap-side">
         <Brand href="/app" size={28} />
-        <AppNav />
+        <AppNav admin={user.role === "admin"} />
         <div className="ap-user">
           <b>{user.name || "Your account"}</b>
           <span>{user.email}</span>
@@ -24,7 +24,7 @@ export default async function AppLayout({ children }) {
       <div>
         <div className="ap-mobilebar">
           <Brand href="/app" size={24} />
-          <AppNav className="" />
+          <AppNav className="" admin={user.role === "admin"} />
         </div>
         <main className="ap-main">{children}</main>
       </div>

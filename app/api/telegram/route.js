@@ -1,0 +1,82 @@
+import { z } from "zod";
+import { db } from "@/lib/db";
+import { Exchange, Group, Telegram } from "@/lib/models";
+import { clientMeta } from "@/lib/auth";
+import { limit } from "@/lib/rate";
+import { apiUser, bad, ok } from "@/lib/session-user";
+import { announce } from "@/lib/redis";
+import { logOut, sendCode, signIn, tgError } from "@/lib/tg";
+
+export const runtime = "nodejs";
+
+const view = (t) => (t ? { status: t.status, phone: t.phone ? t.phone.replace(/\d(?=\d{3})/g, "•") : null, tgName: t.tgName || null, lastError: t.lastError || null } : { status: "none" });
+
+export async function GET(req) {
+  const [user, deny] = await apiUser(req);
+  if (deny) return deny;
+  await db();
+  return ok({ telegram: view(await Telegram.findOne({ userId: user._id }).lean()) });
+}
+
+const Body = z.discriminatedUnion("step", [
+  z.object({ step: z.literal("phone"), phone: z.string().trim().regex(/^\+\d{7,15}$/, "Use the full number with the country code, like +923001234567") }),
+  z.object({ step: z.literal("code"), code: z.string().trim().regex(/^\d[\d\s-]{3,10}$/, "Enter the code Telegram sent you") }),
+  z.object({ step: z.literal("password"), password: z.string().min(1).max(256) }),
+  z.object({ step: z.literal("logout") }),
+]);
+
+// Sign-in in three steps: phone -> code -> (password when two-step verification is on). Then log out when asked.
+export async function POST(req) {
+  const [user, deny] = await apiUser(req, { write: true });
+  if (deny) return deny;
+  let b;
+  try { b = Body.parse(await req.json()); }
+  catch (e) { return bad(e?.issues?.[0]?.message || "Check the form and try again."); }
+  await db();
+  let t = await Telegram.findOne({ userId: user._id });
+
+  try {
+    if (b.step === "phone") {
+      // codes go to real phones: a working exchange key first, then limits per account, per network and for the whole
+      // site (so nobody can use Copixio to spam login codes, or get our Telegram app id rate-limited for everyone)
+      if (!(await Exchange.exists({ userId: user._id, status: "ok" }))) return bad("Connect your exchange first, then Telegram.", 409);
+      const { ip } = await clientMeta();
+      const okUser = await limit(`tg-code:${user._id}`, 5, 3600, { failClosed: true });
+      const okIp = await limit(`tg-code-ip:${ip}`, 10, 3600, { failClosed: true });
+      const okAll = await limit("tg-code-all", 120, 3600, { failClosed: true });
+      if (!okUser || !okIp || !okAll) return bad("Too many codes requested. Try again later.", 429);
+      const r = await sendCode(b.phone);
+      t ||= new Telegram({ userId: user._id });
+      Object.assign(t, { phone: b.phone, phoneCodeHash: r.phoneCodeHash, pendingSessionSealed: r.pendingSessionSealed, pendingAt: new Date(), lastError: null });
+      if (t.status !== "connected") t.status = "pending";
+      await t.save();
+      return ok({ next: "code" });
+    }
+
+    if (b.step === "code" || b.step === "password") {
+      if (!t?.pendingSessionSealed || !t.phoneCodeHash || Date.now() - new Date(t.pendingAt).getTime() > 15 * 6e4)
+        return bad("The sign-in timed out. Enter your phone number again.", 409);
+      if (!(await limit(`tg-signin:${user._id}`, 10, 900, { failClosed: true }))) return bad("Too many tries. Wait 15 minutes.", 429);
+      const r = await signIn({ pendingSessionSealed: t.pendingSessionSealed, phone: t.phone, phoneCodeHash: t.phoneCodeHash, code: b.code, password: b.password });
+      if (r.needPassword) {
+        t.pendingSessionSealed = r.pendingSessionSealed; await t.save();
+        return ok({ next: "password" });
+      }
+      Object.assign(t, { sessionSealed: r.sessionSealed, tgUserId: r.tgUserId, tgName: r.tgName, status: "connected", connectedAt: new Date(), lastError: null, pendingSessionSealed: null, phoneCodeHash: null });
+      await t.save();
+      await announce("telegram", user._id);
+      return ok({ next: "done", telegram: view(t.toObject()) });
+    }
+
+    if (b.step === "logout") {
+      if (t?.sessionSealed) await logOut(t.sessionSealed).catch(() => {});
+      await Telegram.deleteOne({ userId: user._id });
+      await Group.updateMany({ userId: user._id }, { $set: { enabled: false } });
+      await announce("telegram", user._id);
+      return ok({ telegram: { status: "none" } });
+    }
+  } catch (e) {
+    return bad(tgError(e), 422);
+  }
+  return bad("Unknown step.");
+}

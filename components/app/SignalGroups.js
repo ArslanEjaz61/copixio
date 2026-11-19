@@ -28,6 +28,8 @@ function Rules({ group, exchanges, onSaved, onRemoved }) {
   const set = (k) => (v) => { setG((x) => ({ ...x, [k]: v?.target ? (v.target.type === "checkbox" ? v.target.checked : v.target.value) : v })); setDirty(true); };
 
   async function save(enabled) {
+    const nums = ["sizeUsdt", "sizePercent", "maxOpen", "slPercent", "tpPercent", "dailyLossUsdt", "maxEntryGapPct"];
+    if (nums.some((k) => g[k] === "" || g[k] === null || Number.isNaN(Number(g[k])))) return setMsg({ bad: true, text: "Fill in every number (use 0 for “no limit”)." });
     setBusy(true); setMsg(null);
     const { id, chatId, title, kind, ...rules } = g; // eslint-disable-line no-unused-vars
     const j = await api(`/api/groups/${group.id}`, "PUT", { ...rules, enabled });
@@ -69,7 +71,7 @@ function Rules({ group, exchanges, onSaved, onRemoved }) {
               {g.sizeMode === "fixed" ? <input className="input num" type="number" min="1" step="1" value={g.sizeUsdt} onChange={set("sizeUsdt")} aria-label="USDT per trade" />
                 : <input className="input num" type="number" min="0.1" step="0.1" value={g.sizePercent} onChange={set("sizePercent")} aria-label="Percent of free USDT" />}
             </div></div>
-          <div className="field"><label>Max open trades</label><input className="input num" type="number" min="1" max="100" value={g.maxOpen} onChange={set("maxOpen")} /></div>
+          <div className="field"><label>Max open trades</label><input className="input num" type="number" min="1" max="100" value={g.maxOpen} onChange={set("maxOpen")} aria-label="Max open trades" /></div>
         </div>
       </section>
 
@@ -77,7 +79,7 @@ function Rules({ group, exchanges, onSaved, onRemoved }) {
         <div className="rsec-t"><b>Stop loss</b><span className="hint">Placed on the exchange right after the buy.</span></div>
         <div className="rsec-b two">
           <div className="field"><label>Stop from</label><Seg value={g.slMode} onChange={set("slMode")} options={[["signal", "The signal"], ["percent", "My own %"]]} /></div>
-          <div className="field"><label>{g.slMode === "signal" ? "If the signal has none: % below entry" : "% below entry"}</label><input className="input num" type="number" min="0.1" step="0.1" value={g.slPercent} onChange={set("slPercent")} /></div>
+          <div className="field"><label>{g.slMode === "signal" ? "If the signal has none: % below entry" : "% below entry"}</label><input className="input num" type="number" min="0.1" step="0.1" value={g.slPercent} onChange={set("slPercent")} aria-label="Stop loss percent below entry" /></div>
           <label className="check span2"><input type="checkbox" checked={!!g.moveSlToEntry} onChange={set("moveSlToEntry")} />After the first target, move the stop to the entry price (break-even)</label>
         </div>
       </section>
@@ -87,17 +89,17 @@ function Rules({ group, exchanges, onSaved, onRemoved }) {
         <div className="rsec-b two">
           <div className="field"><label>Targets from</label><Seg value={g.tpMode} onChange={set("tpMode")} options={[["signal", "The signal"], ["percent", "My own %"]]} /></div>
           {g.tpMode === "percent"
-            ? <div className="field"><label>% above entry</label><input className="input num" type="number" min="0.1" step="0.1" value={g.tpPercent} onChange={set("tpPercent")} /></div>
+            ? <div className="field"><label>% above entry</label><input className="input num" type="number" min="0.1" step="0.1" value={g.tpPercent} onChange={set("tpPercent")} aria-label="Take profit percent above entry" /></div>
             : <div className="field"><label>Sell over the targets</label>
-                <select className="input" value={g.tpSplit} onChange={set("tpSplit")}><option value="even">Evenly over all targets</option><option value="half">Half at TP1, rest at the last</option><option value="first">Everything at TP1</option></select></div>}
+                <select className="input" value={g.tpSplit} onChange={set("tpSplit")} aria-label="How to sell over the targets"><option value="even">Evenly over all targets</option><option value="half">Half at TP1, rest at the last</option><option value="first">Everything at TP1</option></select></div>}
         </div>
       </section>
 
       <section className="rsec">
         <div className="rsec-t"><b>Safety</b><span className="hint">Limits checked before every order.</span></div>
         <div className="rsec-b two">
-          <div className="field"><label>Daily loss limit (USDT)</label><input className="input num" type="number" min="0" step="1" value={g.dailyLossUsdt} onChange={set("dailyLossUsdt")} /><span className="hint">0 means no limit. When reached, the group stops until tomorrow (UTC).</span></div>
-          <div className="field"><label>Skip if price ran above entry by</label><div className="input-group"><input className="input num" type="number" min="0" step="0.1" value={g.maxEntryGapPct} onChange={set("maxEntryGapPct")} /><span className="suffix">%</span></div><span className="hint">Avoids buying a pump that already happened.</span></div>
+          <div className="field"><label>Daily loss limit (USDT)</label><input className="input num" type="number" min="0" step="1" value={g.dailyLossUsdt} onChange={set("dailyLossUsdt")} aria-label="Daily loss limit in USDT" /><span className="hint">0 means no limit. When reached, the group stops until tomorrow (UTC).</span></div>
+          <div className="field"><label>Skip if price ran above entry by</label><div className="input-group"><input className="input num" type="number" min="0" step="0.1" value={g.maxEntryGapPct} onChange={set("maxEntryGapPct")} aria-label="Skip if price ran above entry by percent" /><span className="suffix">%</span></div><span className="hint">Avoids buying a pump that already happened.</span></div>
         </div>
       </section>
 
@@ -121,10 +123,10 @@ function Picker({ onAdd, onClose }) {
   const [err, setErr] = useState(null);
   const [q, setQ] = useState("");
   const [adding, setAdding] = useState(null);
-  useEffect(() => { api("/api/telegram/chats").then((j) => (j.ok ? setChats(j.chats) : setErr(j.error))); }, []);
-  const shown = useMemo(() => (chats || []).filter((c) => c.title.toLowerCase().includes(q.toLowerCase())), [chats, q]);
+  useEffect(() => { let live = true; api("/api/telegram/chats").then((j) => { if (live) { if (j.ok) setChats(j.chats); else setErr(j.error); } }); return () => { live = false; }; }, []);
+  const shown = useMemo(() => (chats || []).filter((c) => (c.title || "").toLowerCase().includes(q.toLowerCase())), [chats, q]);
   return (
-    <div className="picker" role="dialog" aria-label="Add groups from Telegram">
+    <div className="picker" role="region" aria-label="Add groups from Telegram" ref={(el) => el?.scrollIntoView?.({ block: "nearest" })}>
       <div className="picker-h"><b>Your Telegram groups and channels</b><button className="btn-text" type="button" onClick={onClose}>Done</button></div>
       <input className="input" placeholder="Search by name" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
       {err && <div className="note bad" role="alert">{err}</div>}
@@ -188,7 +190,7 @@ export default function SignalGroups({ initialGroups, exchanges, connected }) {
           </nav>
           {current ? <Rules key={current.id} group={current} exchanges={exchanges}
             onSaved={(ng) => setGroups((gs) => gs.map((x) => (x.id === ng.id ? { ...x, ...ng } : x)))}
-            onRemoved={(id) => { setGroups((gs) => gs.filter((x) => x.id !== id)); setSel(null); }} />
+            onRemoved={(id) => { setGroups((gs) => { const rest = gs.filter((x) => x.id !== id); setSel(rest[0]?.id || null); return rest; }); }} />
             : <div className="empty"><b>Choose a group</b><span>Select a group on the left to set its rules.</span></div>}
         </section>
       )}

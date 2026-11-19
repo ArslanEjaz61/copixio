@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 export const NAV = [
@@ -15,7 +16,7 @@ export function AppNav({ className = "ap-nav", admin = false }) {
   return (
     <nav className={className} aria-label="App">
       {(admin ? [...NAV, ["/app/admin", "Admin"]] : NAV).map(([href, label]) => (
-        <a key={href} href={href} aria-current={path === href || (href !== "/app" && path.startsWith(href)) ? "page" : undefined}>{label}</a>
+        <Link key={href} href={href} aria-current={path === href || (href !== "/app" && path?.startsWith(href + "/")) ? "page" : undefined}>{label}</Link>
       ))}
     </nav>
   );

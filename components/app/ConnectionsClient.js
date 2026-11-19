@@ -74,7 +74,7 @@ function ExchangeTile({ kind, accounts, onAdd, onUpdate, onRemove, serverIp }) {
               <div className="row-main">
                 <b>{x.label || `${meta.name} account`} <span className={`pill ${x.env === "demo" ? "info" : "ok"}`}>{x.env === "demo" ? "Demo" : "Live"}</span></b>
                 <span className="hint">Key {x.keyTail}{x.status === "ok" ? <> · <span className="num">{usd(x.usdtFree)} USDT</span> free</> : ""}</span>
-                {x.status === "error" && <span className="hint err">{x.lastError}</span>}
+                {x.status === "error" && <span className="hint err" role="alert">{x.lastError}</span>}
                 {rowMsg[x.id] && <span className="hint err" role="alert">{rowMsg[x.id]}</span>}
               </div>
               <div className="row-side">

@@ -1,0 +1,21 @@
+.au { min-height: 100vh; min-height: 100svh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); }
+.au-side { background: var(--band); color: var(--band-text); padding: 40px 56px; display: flex; flex-direction: column; justify-content: space-between; gap: 40px; }
+.au-side h2 { font-size: clamp(1.7rem, 2.6vw, 2.4rem); font-weight: 800; letter-spacing: -.02em; line-height: 1.12; max-width: 30rem; }
+.au-side ul { margin: 24px 0 0; padding: 0; display: grid; gap: 14px; color: var(--band-muted); max-width: 30rem; }
+.au-side li { list-style: none; display: flex; gap: 12px; }
+.au-side li svg { color: var(--brass); flex: none; margin-top: 3px; }
+.au-side .fine { color: var(--band-muted); font-size: .9rem; }
+.au-main { display: flex; align-items: center; justify-content: center; padding: 48px 24px; }
+.au-card { width: 100%; max-width: 420px; display: grid; gap: 22px; }
+.au-card h1 { font-size: 2rem; font-weight: 800; letter-spacing: -.02em; }
+.au-card .lead { color: var(--muted); margin-top: 6px; }
+.au-form { display: grid; gap: 16px; }
+.au-alt { color: var(--muted); font-size: .95rem; }
+.au-alt a { color: var(--text); font-weight: 600; }
+.au-mobile-brand { display: none; }
+@media (max-width: 880px) {
+  .au { grid-template-columns: 1fr; }
+  .au-side { display: none; }
+  .au-mobile-brand { display: block; margin-bottom: 8px; }
+  .au-main { align-items: flex-start; padding-top: 40px; }
+}

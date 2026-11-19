@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { Group, Signal, Trade } from "@/lib/models";
 import { currentUser } from "@/lib/auth";
@@ -12,6 +13,7 @@ const when = (d) => (d ? new Date(d).toISOString().slice(5, 16).replace("T", " "
 
 export default async function TradesPage({ searchParams }) {
   const user = await currentUser();
+  if (!user) redirect("/login"); // a stale cookie: the page renders beside the layout, so it checks too
   const { tab = "open" } = await searchParams;
   await db();
   const groups = new Map((await Group.find({ userId: user._id }, { title: 1 }).lean()).map((g) => [String(g._id), g.title]));

@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { Exchange, Telegram } from "@/lib/models";
 import { currentUser } from "@/lib/auth";
@@ -9,6 +10,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ConnectionsPage() {
   const user = await currentUser();
+  if (!user) redirect("/login"); // a stale cookie: the page renders beside the layout, so it checks too
   await db();
   const [ex, t] = await Promise.all([
     Exchange.find({ userId: user._id }).sort({ createdAt: 1 }).lean(),

@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { Exchange, Group, Signal, Telegram, Trade, planOf, PLANS } from "@/lib/models";
@@ -13,6 +14,7 @@ const px = (x) => (x === null || x === undefined ? "–" : Number(Number(x).toPr
 // The dashboard is numbers only: results for the chosen period, what is open now, and how each group performs.
 export default async function Dashboard({ searchParams }) {
   const user = await currentUser();
+  if (!user) redirect("/login"); // a stale cookie: the page renders beside the layout, so it checks too
   const { p = "30d" } = await searchParams;
   const period = PERIODS.some(([k]) => k === p) ? p : "30d";
   const since = sinceOf(period);

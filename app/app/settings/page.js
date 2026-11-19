@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { currentUser } from "@/lib/auth";
 import SettingsClient from "@/components/app/SettingsClient";
 
@@ -6,6 +7,7 @@ export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   const user = await currentUser();
+  if (!user) redirect("/login"); // a stale cookie: the page renders beside the layout, so it checks too
   return (
     <>
       <div className="ap-top"><div><h1>Settings</h1><p>The bot switch, notifications and your account.</p></div></div>

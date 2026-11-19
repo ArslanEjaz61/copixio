@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { Payment, PLANS, planOf } from "@/lib/models";
 import { currentUser } from "@/lib/auth";
@@ -8,6 +9,7 @@ export const dynamic = "force-dynamic";
 
 export default async function BillingPage() {
   const user = await currentUser();
+  if (!user) redirect("/login"); // a stale cookie: the page renders beside the layout, so it checks too
   await db();
   const payments = await Payment.find({ userId: user._id }).sort({ createdAt: -1 }).limit(20).lean();
   const plan = planOf(user);

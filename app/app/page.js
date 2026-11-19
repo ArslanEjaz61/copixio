@@ -19,9 +19,9 @@ export default async function Dashboard({ searchParams }) {
   ]);
   const plan = planOf(user);
   const steps = [
-    { key: "ex", title: "Connect your exchange", done: exCount > 0, href: "/app/exchanges", text: "Add a Binance or KuCoin API key that can trade but not withdraw. A Binance demo key works too." },
-    { key: "tg", title: "Connect Telegram", done: !!tg, href: "/app/telegram", text: "Sign in with your phone number so Copixio can read the signal groups you pick." },
-    { key: "gr", title: "Pick groups and set rules", done: groupsOn > 0, href: "/app/telegram", text: "Choose the groups to trade and set the size, stop loss and limits for each one." },
+    { key: "ex", title: "Connect your exchange", done: exCount > 0, href: "/app/connections", text: "Add a Binance or KuCoin API key that can trade but not withdraw. A Binance demo key works too." },
+    { key: "tg", title: "Connect Telegram", done: !!tg, href: "/app/connections", text: "Sign in with your phone number so Copixio can read the signal groups you pick." },
+    { key: "gr", title: "Pick groups and set rules", done: groupsOn > 0, href: "/app/groups", text: "Choose the groups to trade and set the size, stop loss and limits for each one." },
   ];
   const next = steps.find((s) => !s.done);
   const ready = !next;

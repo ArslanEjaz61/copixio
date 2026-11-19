@@ -3,8 +3,8 @@ import { usePathname, useRouter } from "next/navigation";
 
 export const NAV = [
   ["/app", "Dashboard"],
-  ["/app/exchanges", "Exchanges"],
-  ["/app/telegram", "Telegram groups"],
+  ["/app/connections", "Connections"],
+  ["/app/groups", "Signal groups"],
   ["/app/trades", "Trades"],
   ["/app/billing", "Billing"],
   ["/app/settings", "Settings"],
@@ -15,7 +15,7 @@ export function AppNav({ className = "ap-nav", admin = false }) {
   return (
     <nav className={className} aria-label="App">
       {(admin ? [...NAV, ["/app/admin", "Admin"]] : NAV).map(([href, label]) => (
-        <a key={href} href={href} aria-current={path === href ? "page" : undefined}>{label}</a>
+        <a key={href} href={href} aria-current={path === href || (href !== "/app" && path.startsWith(href)) ? "page" : undefined}>{label}</a>
       ))}
     </nav>
   );

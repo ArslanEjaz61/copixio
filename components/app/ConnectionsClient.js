@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 async function api(path, method = "GET", body) {
   const r = await fetch(path, { method, headers: body ? { "Content-Type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined }).catch(() => null);
@@ -116,6 +116,93 @@ function ExchangeTile({ kind, accounts, onAdd, onUpdate, onRemove, serverIp }) {
   );
 }
 
+// ---------------------------------------------------------------- Telegram sign-in by QR code
+function QrLogin({ onDone, onCancel }) {
+  const [st, setSt] = useState({ status: "idle" });
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function start() {
+    setBusy(true); setErr(null);
+    const j = await api("/api/telegram/qr", "POST", { action: "start" });
+    setBusy(false);
+    if (!j.ok) { setErr(j.error); return; }
+    setSt(j);
+  }
+  // poll while a QR or a password check is pending
+  useEffect(() => {
+    if (!["waiting", "starting", "checking", "password"].includes(st.status)) return undefined;
+    let live = true;
+    const t = setInterval(async () => {
+      const j = await api("/api/telegram/qr");
+      if (!live || !j.ok) return;
+      if (j.status === "done") { clearInterval(t); onDone(j.telegram); return; }
+      setSt((s) => (s.status === "password" && j.status === "password" && !j.error ? s : j));
+    }, 2000);
+    return () => { live = false; clearInterval(t); };
+  }, [st.status, onDone]);
+
+  async function sendPassword(e) {
+    e.preventDefault();
+    const password = new FormData(e.currentTarget).get("password");
+    setBusy(true); setErr(null);
+    const j = await api("/api/telegram/qr", "POST", { action: "password", password });
+    setBusy(false);
+    if (!j.ok) setErr(j.error); else setSt({ status: "checking" });
+  }
+  async function cancel() { await api("/api/telegram/qr", "POST", { action: "cancel" }); onCancel(); }
+
+  return (
+    <div className="tile-form">
+      <div className="form-col">
+        {st.status === "idle" && (
+          <>
+            <p>Sign in by scanning a QR code with the Telegram app on your phone. No phone number or code needed.</p>
+            {err && <div className="note bad" role="alert">{err}</div>}
+            <div className="actions">
+              <button className="btn btn-ink" type="button" disabled={busy} onClick={start}>{busy ? "Preparing the code…" : "Show QR code"}</button>
+              <button className="btn-text" type="button" onClick={onCancel}>Cancel</button>
+            </div>
+          </>
+        )}
+        {(st.status === "waiting" || st.status === "starting") && (
+          <>
+            <div className="qr-box">{st.qr ? <img src={st.qr} alt="Telegram login QR code" width="220" height="220" /> : <span className="hint">Preparing the code…</span>}</div>
+            <p className="hint" role="status">Waiting for you to scan… The code refreshes by itself.</p>
+            <div className="actions"><button className="btn-text" type="button" onClick={cancel}>Cancel</button></div>
+          </>
+        )}
+        {st.status === "password" && (
+          <form onSubmit={sendPassword} className="form-col" style={{ padding: 0 }}>
+            <div className="field"><label htmlFor="qr-pw">Two-step verification password</label>
+              <input className="input" id="qr-pw" name="password" type="password" autoComplete="current-password" required autoFocus />
+              <span className="hint">Scanned. Your account also has a Telegram password{st.hint ? ` (hint: ${st.hint})` : ""}.</span></div>
+            {(err || st.error) && <div className="note bad" role="alert">{err || st.error}</div>}
+            <div className="actions"><button className="btn btn-ink" type="submit" disabled={busy}>{busy ? "Checking…" : "Sign in"}</button><button className="btn-text" type="button" onClick={cancel}>Cancel</button></div>
+          </form>
+        )}
+        {st.status === "checking" && <p className="hint" role="status">Signing you in…</p>}
+        {(st.status === "expired" || st.status === "error" || st.status === "none") && (
+          <>
+            <div className="note warn" role="alert">{st.status === "expired" || st.status === "none" ? "The QR code expired." : st.error || "Telegram did not accept the sign-in."}</div>
+            <div className="actions"><button className="btn btn-ink" type="button" onClick={start}>Show a new QR code</button><button className="btn-text" type="button" onClick={onCancel}>Cancel</button></div>
+          </>
+        )}
+      </div>
+      <aside className="guide">
+        <b>How to scan</b>
+        <ol>
+          <li>Open Telegram on your phone.</li>
+          <li>Go to <b>Settings → Devices</b>.</li>
+          <li>Tap <b>Link Desktop Device</b>.</li>
+          <li>Point the camera at this code.</li>
+        </ol>
+        <p className="hint">Copixio reads only the groups you choose and never sends messages. End the login any time in Telegram → Devices.</p>
+      </aside>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- the Telegram tile: sign-in stepper
 const STEPS = [["phone", "Phone"], ["code", "Code"], ["password", "Password"]];
 function TelegramTile({ tg, setTg, groupsHref, hasExchange, configured }) {
@@ -141,6 +228,7 @@ function TelegramTile({ tg, setTg, groupsHref, hasExchange, configured }) {
     if (j.ok) setTg({ status: "none" });
   }
   const shownSteps = step === "password" ? STEPS : STEPS.slice(0, 2);
+  const [mode, setMode] = useState("qr");
 
   return (
     <article className="tile tile-wide">
@@ -172,6 +260,14 @@ function TelegramTile({ tg, setTg, groupsHref, hasExchange, configured }) {
           {!configured && <span className="hint">Telegram sign-in opens as soon as it is switched on for Copixio.</span>}
         </div>
       ) : (
+        <>
+        <div className="tile-mode">
+          <div className="seg" role="tablist" aria-label="How to sign in">
+            <button type="button" role="tab" aria-selected={mode === "qr"} className={mode === "qr" ? "on" : ""} onClick={() => setMode("qr")}>Scan QR code</button>
+            <button type="button" role="tab" aria-selected={mode === "phone"} className={mode === "phone" ? "on" : ""} onClick={() => setMode("phone")}>Phone number</button>
+          </div>
+        </div>
+        {mode === "qr" ? <QrLogin onDone={(t) => { setTg(t); setOpen(false); }} onCancel={() => setOpen(false)} /> : (
         <div className="tile-form">
           <form className="form-col" onSubmit={submit}>
             <ol className="stepper" aria-label="Sign-in steps">
@@ -201,6 +297,8 @@ function TelegramTile({ tg, setTg, groupsHref, hasExchange, configured }) {
             <p className="hint">Your login is encrypted with AES-256 and never shown to anyone.</p>
           </aside>
         </div>
+        )}
+        </>
       )}
     </article>
   );

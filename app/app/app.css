@@ -162,3 +162,5 @@
 .picker-list li:last-child { border-bottom: 0; }
 @media (max-width: 1000px) { .rsec { grid-template-columns: 1fr; gap: 10px; } }
 @media (max-width: 860px) { .grp-layout { grid-template-columns: 1fr; } .grp-list { border-right: 0; border-bottom: 1px solid var(--line); } .rsec-b.two { grid-template-columns: 1fr; } }
+/* the sidebar colour runs the full height of long pages */
+@media (min-width: 961px) { .ap { background: linear-gradient(to right, var(--band) 240px, var(--paper) 240px); } }

@@ -19,9 +19,9 @@ export async function GET(req) {
 }
 
 const Body = z.discriminatedUnion("step", [
-  z.object({ step: z.literal("phone"), phone: z.string().trim().regex(/^\+\d{7,15}$/, "Use the full number with the country code, like +923001234567") }),
-  z.object({ step: z.literal("code"), code: z.string().trim().regex(/^\d[\d\s-]{3,10}$/, "Enter the code Telegram sent you") }),
-  z.object({ step: z.literal("password"), password: z.string().min(1).max(256) }),
+  z.object({ step: z.literal("phone"), phone: z.string().trim().regex(/^\+\d{7,15}$/, "Use the full number with the country code, like +923001234567"), retry: z.boolean().optional() }),
+  z.object({ step: z.literal("code"), code: z.string().trim().regex(/^\d[\d\s-]{3,10}$/, "Enter the code Telegram sent you"), retry: z.boolean().optional() }),
+  z.object({ step: z.literal("password"), password: z.string().min(1).max(256), retry: z.boolean().optional() }),
   z.object({ step: z.literal("logout") }),
 ]);
 
@@ -40,6 +40,8 @@ export async function POST(req) {
       // codes go to real phones: a working exchange key first, then limits per account, per network and for the whole
       // site (so nobody can use Copixio to spam login codes, or get our Telegram app id rate-limited for everyone)
       if (!(await Exchange.exists({ userId: user._id, status: "ok" }))) return bad("Connect your exchange first, then Telegram.", 409);
+      // the page retries when the network drops; if the first request already sent a code, don't send another
+      if (b.retry && t?.phone === b.phone && t.phoneCodeHash && Date.now() - new Date(t.pendingAt).getTime() < 90e3) return ok({ next: "code" });
       const { ip } = await clientMeta();
       const okUser = await limit(`tg-code:${user._id}`, 5, 3600, { failClosed: true });
       const okIp = await limit(`tg-code-ip:${ip}`, 10, 3600, { failClosed: true });
@@ -54,6 +56,9 @@ export async function POST(req) {
     }
 
     if (b.step === "code" || b.step === "password") {
+      // a retry after the first try already signed in (its answer was lost on the way back)
+      if (b.retry && t?.status === "connected" && !t.pendingSessionSealed && Date.now() - new Date(t.connectedAt).getTime() < 5 * 6e4)
+        return ok({ next: "done", telegram: view(t.toObject()) });
       if (!t?.pendingSessionSealed || !t.phoneCodeHash || Date.now() - new Date(t.pendingAt).getTime() > 15 * 6e4)
         return bad("The sign-in timed out. Enter your phone number again.", 409);
       if (!(await limit(`tg-signin:${user._id}`, 10, 900, { failClosed: true }))) return bad("Too many tries. Wait 15 minutes.", 429);

@@ -1,10 +1,18 @@
 "use client";
 import { useEffect, useState } from "react";
 
+// Network drops (VPN, mobile data, a proxy hiccup) are retried a few times before the user sees an error.
+// Retries are marked so the server can tell "the first try already went through" from a new request.
 async function api(path, method = "GET", body) {
-  const r = await fetch(path, { method, headers: body ? { "Content-Type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined }).catch(() => null);
+  let r = null;
+  for (let i = 0; i < 4 && !r; i++) {
+    if (i) await new Promise((res) => setTimeout(res, 1200 * i));
+    const send = i && body?.step ? { ...body, retry: true } : body;
+    r = await fetch(path, { method, cache: "no-store", headers: send ? { "Content-Type": "application/json" } : undefined, body: send ? JSON.stringify(send) : undefined, signal: AbortSignal.timeout?.(30000) }).catch(() => null);
+    if (r && r.status >= 502 && r.status <= 504) r = null; // proxy or restart window: try again
+  }
   const j = r ? await r.json().catch(() => ({})) : {};
-  return { ok: !!r && r.ok, ...j, error: j.error || (!r ? "Could not reach Copixio. Try again." : undefined) };
+  return { ok: !!r && r.ok, ...j, error: j.error || (!r ? "Your connection to Copixio dropped. Check your internet (or VPN) and try again." : undefined) };
 }
 const usd = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 

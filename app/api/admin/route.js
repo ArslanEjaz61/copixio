@@ -27,7 +27,8 @@ export async function POST(req) {
     const u = await User.findById(p.userId);
     if (b.decision === "approve") {
       const keep = u.plan === p.plan ? u.planUntil : null; // the same plan extends; another plan starts now
-      u.plan = p.plan; u.planUntil = addMonths(keep, p.months); await u.save();
+      // a paid plan starts from today when it replaces the free trial
+      u.plan = p.plan; u.planUntil = addMonths(u.trial ? null : keep, p.months); u.trial = false; await u.save();
       await notify(u, `✅ Payment confirmed. Your ${p.plan} plan is active until ${u.planUntil.toDateString()}. The bot is on.`);
     } else {
       await notify(u, `⚠️ We could not confirm your payment (TXID ${p.txid}).${b.note ? ` ${b.note}` : ""} Reply to support if you think this is wrong.`);
@@ -38,7 +39,7 @@ export async function POST(req) {
   if (b.action === "plan") {
     if (!mongoose.isValidObjectId(b.userId)) return bad("Not found.", 404);
     const until = b.plan === "none" || b.days === 0 ? null : new Date(Date.now() + b.days * 864e5);
-    await User.updateOne({ _id: b.userId }, { $set: { plan: b.plan, planUntil: until } });
+    await User.updateOne({ _id: b.userId }, { $set: { plan: b.plan, planUntil: until, trial: false } });
     return ok();
   }
   return bad("Unknown action.");

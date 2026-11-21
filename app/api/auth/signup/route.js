@@ -30,8 +30,12 @@ export async function POST(req) {
   if (await User.exists({ email: body.email }))
     return NextResponse.json({ error: "An account with this email already exists. Sign in instead.", field: "email" }, { status: 409 });
 
+  // Free trial: Starter limits for TRIAL_DAYS (7) from sign-up, so a new user's bot trades as soon as it is set up.
+  // TRIAL_DAYS=0 turns it off (pay first).
+  const trialDays = Number(process.env.TRIAL_DAYS ?? 7);
+  const trial = trialDays > 0 ? { plan: "starter", planUntil: new Date(Date.now() + trialDays * 864e5), trial: true } : {};
   const user = await User.create({
-    name: body.name, email: body.email, passwordHash: await hashPassword(body.password), wantedPlan: body.plan || null,
+    name: body.name, email: body.email, passwordHash: await hashPassword(body.password), wantedPlan: body.plan || null, ...trial,
   });
   const token = await issueToken(user._id, "verify", 24);
   const mail = await sendVerifyEmail(user.email, token).catch(() => ({ sent: false }));

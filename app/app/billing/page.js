@@ -16,8 +16,8 @@ export default async function BillingPage() {
   return (
     <>
       <div className="ap-top">
-        <div><h1>Billing</h1><p>{plan === "none" ? "No plan is active. Set everything up, then pick a plan to switch the bot on." : `${PLANS[plan].name} plan, active until ${new Date(user.planUntil).toDateString()}.`}</p></div>
-        {plan !== "none" && <span className="pill ok">{PLANS[plan].name} · active</span>}
+        <div><h1>Billing</h1><p>{plan === "none" ? "No plan is active. Set everything up, then pick a plan to switch the bot on." : user.trial ? `Free trial with ${PLANS[plan].name} limits until ${new Date(user.planUntil).toDateString()}. Pick a plan before it ends to keep the bot trading.` : `${PLANS[plan].name} plan, active until ${new Date(user.planUntil).toDateString()}.`}</p></div>
+        {plan !== "none" && <span className="pill ok">{user.trial ? "Free trial" : PLANS[plan].name} · active</span>}
       </div>
       <BillingClient plans={PLANS} current={plan} address={process.env.USDT_TRC20_ADDRESS || ""} pending={payments.some((p) => p.status === "submitted")} />
       {payments.length > 0 && (

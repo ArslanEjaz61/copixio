@@ -93,7 +93,7 @@ export default async function Dashboard({ searchParams }) {
             {[["Binance", conn("binance")], ["KuCoin", conn("kucoin")], ["Telegram", tg]].map(([n, ok]) => (
               <li key={n}><b>{n}</b>{ok ? <span className="pill ok">{n !== "Telegram" && ok.env === "demo" ? "Connected · demo" : "Connected"}</span> : <span className="pill info">Not connected</span>}</li>
             ))}
-            <li><b>Plan</b>{plan === "none" ? <Link className="pill wait" href="/app/billing" style={{ textDecoration: "none" }}>No plan</Link> : <span className="pill ok">{PLANS[plan].name} · until {new Date(user.planUntil).toISOString().slice(0, 10)}</span>}</li>
+            <li><b>Plan</b>{plan === "none" ? <Link className="pill wait" href="/app/billing" style={{ textDecoration: "none" }}>No plan</Link> : <span className="pill ok">{user.trial ? "Free trial" : PLANS[plan].name} · until {new Date(user.planUntil).toISOString().slice(0, 10)}</span>}</li>
           </ul>
         </section>
       </div>

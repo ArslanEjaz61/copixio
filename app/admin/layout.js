@@ -1,7 +1,7 @@
 import "../app/app.css";
 import "./admin.css";
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import { Brand } from "@/components/Logo";
 import { AdminNav } from "@/components/admin/AdminNav";
 import { LogoutButton } from "@/components/app/AppNav";
@@ -15,7 +15,7 @@ export const metadata = { title: { default: "Admin", template: "%s · Copixio Ad
 export default async function AdminLayout({ children }) {
   const me = await currentUser();
   if (!me) redirect("/login?next=/admin");
-  if (me.role !== "admin") notFound();
+  if (me.role !== "admin") redirect("/admin-signin");
   await db();
   const pending = await Payment.countDocuments({ status: "submitted" });
   return (

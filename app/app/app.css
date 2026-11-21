@@ -174,3 +174,16 @@
 .tile-mode { padding: 14px 20px 0; border-top: 1px solid var(--line); }
 .qr-box { width: 244px; height: 244px; display: grid; place-items: center; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
 .qr-box img { width: 220px; height: 220px; image-rendering: pixelated; }
+
+/* Connections: pick an exchange to add */
+.ex-pick { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.ex-pick-h { padding: 16px 20px; border-bottom: 1px solid var(--line); display: grid; gap: 2px; }
+.ex-pick-h h3 { font-size: 1.05rem; font-weight: 700; }
+.ex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; padding: 16px 20px; }
+.ex-chip { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; text-align: left; font: inherit; }
+.ex-chip:hover { border-color: var(--muted); }
+.ex-chip:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+.ex-chip.on { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink) inset; }
+.ex-chip .tile-mark { width: 34px; height: 34px; font-size: .78rem; flex: none; }
+.ex-chip b { display: block; font-weight: 600; }
+.ex-chip small { color: var(--muted); font-size: .8rem; }

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import { exchangeMeta } from "@/lib/exchanges/list";
 
 async function api(path, method = "GET", body) {
   const r = await fetch(path, { method, headers: body ? { "Content-Type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined }).catch(() => null);
@@ -57,7 +58,7 @@ function Rules({ group, exchanges, onSaved, onRemoved }) {
         <div className="rsec-b">
           <select className="input" value={g.exchangeId} onChange={set("exchangeId")} aria-label="Exchange account">
             {exchanges.length === 0 && <option value="">Connect an exchange first</option>}
-            {exchanges.map((x) => <option key={x.id} value={x.id}>{x.exchange === "binance" ? "Binance" : "KuCoin"}{x.env === "demo" ? " · demo" : ""}{x.label ? ` · ${x.label}` : ""}</option>)}
+            {exchanges.map((x) => <option key={x.id} value={x.id}>{exchangeMeta(x.exchange).name}{x.env === "demo" ? " · demo" : ""}{x.label ? ` · ${x.label}` : ""}</option>)}
           </select>
         </div>
       </section>

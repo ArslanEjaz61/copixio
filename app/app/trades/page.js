@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { Group, Signal, Trade } from "@/lib/models";
 import { currentUser } from "@/lib/auth";
 import CloseTrade from "@/components/app/CloseTrade";
+import { exchangeName } from "@/lib/exchanges/list";
 
 export const metadata = { title: "Trades" };
 export const dynamic = "force-dynamic";
@@ -44,7 +45,7 @@ export default async function TradesPage({ searchParams }) {
               <thead><tr><th>Coin</th><th>Group</th><th className="r">Size</th><th className="r">Entry</th><th className="r">Stop</th><th>Targets</th><th>Opened</th><th></th></tr></thead>
               <tbody>{open.map((t) => (
                 <tr key={String(t._id)}>
-                  <td><b>{t.base}</b><div className="hint">{t.exchange === "binance" ? "Binance" : "KuCoin"}{t.env === "demo" ? " demo" : ""}</div></td>
+                  <td><b>{t.base}</b><div className="hint">{exchangeName(t.exchange, t.env)}</div></td>
                   <td>{groups.get(String(t.groupId)) || "–"}</td>
                   <td className="r num">{n(t.costUsdt)}</td>
                   <td className="r num">{p(t.entryPrice)}</td>
@@ -72,7 +73,7 @@ export default async function TradesPage({ searchParams }) {
                 <thead><tr><th>Coin</th><th>Group</th><th className="r">Size</th><th className="r">Entry</th><th className="r">Exit</th><th className="r">Result</th><th>Outcome</th><th>Closed</th></tr></thead>
                 <tbody>{closed.map((t) => (
                   <tr key={String(t._id)}>
-                    <td><b>{t.base}</b><div className="hint">{t.exchange === "binance" ? "Binance" : "KuCoin"}{t.env === "demo" ? " demo" : ""}</div></td>
+                    <td><b>{t.base}</b><div className="hint">{exchangeName(t.exchange, t.env)}</div></td>
                     <td>{groups.get(String(t.groupId)) || "–"}</td>
                     <td className="r num">{n(t.costUsdt)}</td>
                     <td className="r num">{p(t.entryPrice)}</td>

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { EXCHANGES, exchangeMeta } from "@/lib/exchanges/list";
 
 // Network drops (VPN, mobile data, a proxy hiccup) are retried a few times before the user sees an error.
 // Retries are marked so the server can tell "the first try already went through" from a new request.
@@ -16,28 +17,13 @@ async function api(path, method = "GET", body) {
 }
 const usd = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const GUIDES = {
-  binance: [
-    "Binance → Profile → API Management (demo account: demo.binance.com → API Management).",
-    "Create API → System generated → name it Copixio.",
-    "Edit restrictions: tick Enable Spot & Margin Trading. Keep Withdrawals and Transfers OFF.",
-    "IP access: restrict to our server IP below, or leave unrestricted.",
-    "Copy the API key and secret (the secret is shown only once).",
-  ],
-  kucoin: [
-    "KuCoin → Account → API Management → Create API → API Trading.",
-    "Set a passphrase: you will need it here.",
-    "Permissions: General and Spot Trading only. No Withdrawal, no Transfer.",
-    "IP restriction: our server IP below, or none.",
-    "Copy the key, secret and passphrase.",
-  ],
-};
-const EX = { binance: { name: "Binance", mark: "B", tone: "#B7862A", sub: "Spot · live or demo account" }, kucoin: { name: "KuCoin", mark: "K", tone: "#1F8F6F", sub: "Spot · live account" } };
+// every exchange's name, colours, passphrase need and key guide: lib/exchanges/list.js
 
 // ---------------------------------------------------------------- an exchange tile: accounts + connect form
-function ExchangeTile({ kind, accounts, onAdd, onUpdate, onRemove, serverIp }) {
-  const meta = EX[kind];
-  const [open, setOpen] = useState(false);
+function ExchangeTile({ kind, accounts, onAdd, onUpdate, onRemove, serverIp, startOpen = false, onClose }) {
+  const meta = exchangeMeta(kind);
+  const [open, setOpen] = useState(startOpen);
+  const close = () => { setOpen(false); if (!accounts.length) onClose?.(); };
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [rowBusy, setRowBusy] = useState(null);
@@ -47,11 +33,11 @@ function ExchangeTile({ kind, accounts, onAdd, onUpdate, onRemove, serverIp }) {
     e.preventDefault();
     setBusy(true); setErr(null);
     const f = new FormData(e.currentTarget);
-    const body = { exchange: kind, label: f.get("label") || "", key: f.get("key"), secret: f.get("secret"), ...(kind === "kucoin" ? { passphrase: f.get("passphrase") } : {}) };
+    const body = { exchange: kind, label: f.get("label") || "", key: f.get("key"), secret: f.get("secret"), ...(meta.pass ? { passphrase: f.get("passphrase") } : {}) };
     const j = await api("/api/exchanges", "POST", body);
     setBusy(false);
     if (!j.ok) return setErr(j.error);
-    onAdd(j.exchange); setOpen(false);
+    onAdd(j.exchange); setOpen(false); onClose?.();
   }
   async function recheck(id) {
     setRowBusy(id);
@@ -68,10 +54,10 @@ function ExchangeTile({ kind, accounts, onAdd, onUpdate, onRemove, serverIp }) {
   }
 
   return (
-    <article className="tile">
+    <article className="tile" id={`tile-${kind}`}>
       <header className="tile-h">
-        <span className="tile-mark" style={{ background: meta.tone }} aria-hidden="true">{meta.mark}</span>
-        <div><h3>{meta.name}</h3><p className="hint">{meta.sub}</p></div>
+        <span className="tile-mark" style={{ background: meta.color, color: meta.ink || "#fff" }} aria-hidden="true">{meta.mark}</span>
+        <div><h3>{meta.name}</h3><p className="hint">{meta.demo ? "Spot · live or demo account" : "Spot · live account"}</p></div>
         {accounts.length > 0 ? <span className="pill ok">Connected</span> : <span className="pill info">Not connected</span>}
       </header>
 
@@ -103,19 +89,21 @@ function ExchangeTile({ kind, accounts, onAdd, onUpdate, onRemove, serverIp }) {
       ) : (
         <div className="tile-form">
           <form className="form-col" onSubmit={add}>
-            <div className="field"><label htmlFor={`${kind}-key`}>API key</label><input className="input mono" id={`${kind}-key`} name="key" autoComplete="off" spellCheck="false" required autoFocus /></div>
-            <div className="field"><label htmlFor={`${kind}-secret`}>Secret key</label><input className="input mono" id={`${kind}-secret`} name="secret" type="password" autoComplete="off" required /></div>
-            {kind === "kucoin" && <div className="field"><label htmlFor="kc-pass">Passphrase</label><input className="input" id="kc-pass" name="passphrase" type="password" autoComplete="off" required /></div>}
-            <div className="field"><label htmlFor={`${kind}-label`}>Name <span className="hint">(optional)</span></label><input className="input" id={`${kind}-label`} name="label" maxLength={40} placeholder={kind === "binance" ? "Main / Demo" : "Main"} /></div>
+            <div className="field"><label htmlFor={`${kind}-key`}>{meta.keyLabel || "API key"}</label><input className="input mono" id={`${kind}-key`} name="key" autoComplete="off" spellCheck="false" required autoFocus /></div>
+            <div className="field"><label htmlFor={`${kind}-secret`}>{meta.secretLabel || "Secret key"}</label>{meta.longSecret
+              ? <textarea className="input mono" id={`${kind}-secret`} name="secret" rows={5} autoComplete="off" spellCheck="false" required placeholder="-----BEGIN EC PRIVATE KEY-----" />
+              : <input className="input mono" id={`${kind}-secret`} name="secret" type="password" autoComplete="off" required />}</div>
+            {meta.pass && <div className="field"><label htmlFor={`${kind}-pass`}>{meta.pass}</label><input className="input" id={`${kind}-pass`} name="passphrase" type="password" autoComplete="off" required /></div>}
+            <div className="field"><label htmlFor={`${kind}-label`}>Name <span className="hint">(optional)</span></label><input className="input" id={`${kind}-label`} name="label" maxLength={40} placeholder={meta.demo ? "Main / Demo" : "Main"} /></div>
             {err && <div className="note bad" role="alert">{err}</div>}
             <div className="actions">
               <button className="btn btn-ink" type="submit" disabled={busy}>{busy ? "Testing the key…" : "Test and connect"}</button>
-              <button className="btn-text" type="button" onClick={() => setOpen(false)}>Cancel</button>
+              <button className="btn-text" type="button" onClick={close}>Cancel</button>
             </div>
           </form>
           <aside className="guide">
             <b>Create the key on {meta.name}</b>
-            <ol>{GUIDES[kind].map((s) => <li key={s}>{s}</li>)}</ol>
+            <ol>{meta.guide.map((s) => <li key={s}>{s}</li>)}</ol>
             <div className="ipbox"><span className="hint">Our server IP</span><b className="num">{serverIp}</b></div>
           </aside>
         </div>
@@ -318,14 +306,35 @@ export default function ConnectionsClient({ initialExchanges, initialTelegram, s
   const add = (x) => setList((l) => [...l, x]);
   const upd = (x) => setList((l) => l.map((y) => (y.id === x.id ? x : y)));
   const rem = (id) => setList((l) => l.filter((y) => y.id !== id));
+  const [adding, setAdding] = useState(null);
+  // tiles: every exchange with an account, plus the one being added
+  const shown = EXCHANGES.map((x) => x.id).filter((id) => id === adding || list.some((a) => a.exchange === id));
+  useEffect(() => { if (adding) document.getElementById(`tile-${adding}`)?.scrollIntoView({ behavior: "smooth", block: "center" }); }, [adding]);
   return (
     <>
       <h2 className="sec-title">Exchanges</h2>
-      <div className="tiles">
-        {["binance", "kucoin"].map((k) => (
-          <ExchangeTile key={k} kind={k} accounts={list.filter((x) => x.exchange === k)} onAdd={add} onUpdate={upd} onRemove={rem} serverIp={serverIp} />
-        ))}
-      </div>
+      {shown.length > 0 && (
+        <div className="tiles">
+          {shown.map((k) => (
+            <ExchangeTile key={k} kind={k} accounts={list.filter((x) => x.exchange === k)} onAdd={add} onUpdate={upd} onRemove={rem} serverIp={serverIp}
+              startOpen={k === adding && !list.some((x) => x.exchange === k)} onClose={() => setAdding(null)} />
+          ))}
+        </div>
+      )}
+      <section className="ex-pick" aria-labelledby="ex-pick-h">
+        <div className="ex-pick-h"><h3 id="ex-pick-h">{list.length ? "Add another exchange" : "Connect an exchange"}</h3><p className="hint">Spot trading. Your funds stay on the exchange; keys that can withdraw are not used.</p></div>
+        <div className="ex-grid">
+          {EXCHANGES.map((x) => {
+            const has = list.some((a) => a.exchange === x.id);
+            return (
+              <button key={x.id} type="button" className={`ex-chip${adding === x.id ? " on" : ""}`} aria-pressed={adding === x.id} onClick={() => setAdding(x.id)}>
+                <span className="tile-mark" style={{ background: x.color, color: x.ink || "#fff" }} aria-hidden="true">{x.mark}</span>
+                <span><b>{x.name}</b><small>{has ? "Connected" : x.demo ? "Live or demo" : "Live"}</small></span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
       <h2 className="sec-title">Signals</h2>
       <TelegramTile tg={tg} setTg={setTg} groupsHref="/app/groups" hasExchange={list.some((x) => x.status === "ok")} configured={configured} />
     </>

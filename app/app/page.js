@@ -3,6 +3,7 @@ import Link from "next/link";
 import { db } from "@/lib/db";
 import { Exchange, Group, Signal, Telegram, Trade, planOf, PLANS } from "@/lib/models";
 import { currentUser } from "@/lib/auth";
+import { exchangeName } from "@/lib/exchanges/list";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +25,7 @@ export default async function Dashboard({ searchParams }) {
     Trade.find({ userId: user._id, status: "closed", closedAt: { $gte: since } }, { pnlUsdt: 1, groupId: 1, base: 1, outcome: 1, closedAt: 1, costUsdt: 1, exchange: 1 }).sort({ closedAt: -1 }).lean(),
     Trade.find({ userId: user._id, status: { $in: ["opening", "open", "closing"] } }).sort({ createdAt: -1 }).lean(),
     Group.find({ userId: user._id }, { title: 1, kind: 1, enabled: 1 }).lean(),
-    Exchange.find({ userId: user._id }, { exchange: 1, env: 1, status: 1 }).lean(),
+    Exchange.find({ userId: user._id }, { exchange: 1, env: 1, status: 1, label: 1 }).lean(),
     Telegram.findOne({ userId: user._id, status: "connected" }, { _id: 1 }).lean(),
     Signal.aggregate([{ $match: { userId: user._id, createdAt: { $gte: since } } }, { $group: { _id: "$outcome", n: { $sum: 1 } } }]),
   ]);
@@ -47,7 +48,6 @@ export default async function Dashboard({ searchParams }) {
   const groupRows = [...byGroup.values()].sort((a, b) => b.pnl - a.pnl || b.trades - a.trades);
   const gName = (id) => byGroup.get(String(id))?.title || "–";
   const plan = planOf(user);
-  const conn = (k) => exchanges.find((x) => x.exchange === k && x.status === "ok");
 
   return (
     <>
@@ -81,7 +81,7 @@ export default async function Dashboard({ searchParams }) {
             <div className="tbl"><table style={{ minWidth: 520 }}>
               <thead><tr><th>Coin</th><th>Group</th><th className="r">Size</th><th className="r">Entry</th><th className="r">Stop</th></tr></thead>
               <tbody>{open.slice(0, 10).map((t) => (
-                <tr key={String(t._id)}><td><b>{t.base}</b><div className="hint">{t.exchange === "binance" ? "Binance" : "KuCoin"}</div></td><td>{gName(t.groupId)}</td>
+                <tr key={String(t._id)}><td><b>{t.base}</b><div className="hint">{exchangeName(t.exchange, t.env)}</div></td><td>{gName(t.groupId)}</td>
                   <td className="r num">{(t.costUsdt || 0).toFixed(2)}</td><td className="r num">{px(t.entryPrice)}</td><td className="r num neg">{px(t.stopPrice)}</td></tr>))}
               </tbody></table></div>
           )}
@@ -90,8 +90,9 @@ export default async function Dashboard({ searchParams }) {
         <section className="panel">
           <div className="panel-h"><h2>Accounts</h2><Link className="btn-text" href="/app/connections">Manage</Link></div>
           <ul className="rows">
-            {[["Binance", conn("binance")], ["KuCoin", conn("kucoin")], ["Telegram", tg]].map(([n, ok]) => (
-              <li key={n}><b>{n}</b>{ok ? <span className="pill ok">{n !== "Telegram" && ok.env === "demo" ? "Connected · demo" : "Connected"}</span> : <span className="pill info">Not connected</span>}</li>
+            {[...exchanges.map((x) => [`${exchangeName(x.exchange, x.env)}${x.label ? ` · ${x.label}` : ""}`, x.status === "ok" ? "Connected" : "Key failing", String(x._id)]),
+              ...(exchanges.length ? [] : [["Exchange", null, "ex"]]), ["Telegram", tg ? "Connected" : null, "tg"]].map(([n, st, k]) => (
+              <li key={k}><b>{n}</b>{st ? <span className={`pill ${st === "Connected" ? "ok" : "bad"}`}>{st}</span> : <span className="pill info">Not connected</span>}</li>
             ))}
             <li><b>Plan</b>{plan === "none" ? <Link className="pill wait" href="/app/billing" style={{ textDecoration: "none" }}>No plan</Link> : <span className="pill ok">{user.trial ? "Free trial" : PLANS[plan].name} · until {new Date(user.planUntil).toISOString().slice(0, 10)}</span>}</li>
           </ul>

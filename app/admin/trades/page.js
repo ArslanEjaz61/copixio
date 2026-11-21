@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { Group, Trade, User } from "@/lib/models";
 import { px, requireAdmin, usd, when } from "@/lib/admin";
+import { exchangeName } from "@/lib/exchanges/list";
 
 export const metadata = { title: "Trades" };
 export const dynamic = "force-dynamic";
 
 const LIVE = ["opening", "open", "closing"];
-const exName = (t) => `${t.exchange === "binance" ? "Binance" : "KuCoin"}${t.env === "demo" ? " demo" : ""}`;
+const exName = (t) => exchangeName(t.exchange, t.env);
 
 export default async function AdminTrades({ searchParams }) {
   await requireAdmin();

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Exchange, Group, Telegram, Trade, User, PLANS, planOf } from "@/lib/models";
 import { ago, day, requireAdmin, standing, usd } from "@/lib/admin";
+import { exchangeName } from "@/lib/exchanges/list";
 
 export const metadata = { title: "Users" };
 export const dynamic = "force-dynamic";
@@ -75,7 +76,7 @@ export default async function AdminUsers({ searchParams }) {
                   {u.role === "admin" && <span className="hint">admin</span>}
                   {u.botPaused && <span className="hint">bot paused</span>}
                 </td>
-                <td>{exs.length === 0 ? <span className="hint">–</span> : <span className={`pill ${exBad ? "bad" : "ok"}`}>{exs.map((e) => `${e.exchange === "binance" ? "Binance" : "KuCoin"}${e.env === "demo" ? " demo" : ""}`).join(", ")}</span>}</td>
+                <td>{exs.length === 0 ? <span className="hint">–</span> : <span className={`pill ${exBad ? "bad" : "ok"}`}>{exs.map((e) => exchangeName(e.exchange, e.env)).join(", ")}</span>}</td>
                 <td>{!t ? <span className="hint">–</span> : t.status === "connected" ? <span className="pill ok">Connected</span> : <span className="pill wait">{t.status}</span>}</td>
                 <td className="r num">{g}</td>
                 <td className="r num">{k.n}</td>

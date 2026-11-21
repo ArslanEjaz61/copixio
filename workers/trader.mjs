@@ -12,8 +12,8 @@ import Redis from "ioredis";
 import { db } from "../lib/db.js";
 import { Exchange, Group, Signal, Trade, User, PLANS, planOf } from "../lib/models.js";
 import { adapterFor, floorTo } from "../lib/exchanges/adapter.js";
-import { checkKey as binanceCheck } from "../lib/exchanges/binance.js";
-import { checkKey as kucoinCheck } from "../lib/exchanges/kucoin.js";
+import { checkKeyFor } from "../lib/exchanges/check.js";
+import { exchangeName } from "../lib/exchanges/list.js";
 import { unseal } from "../lib/seal.js";
 import { notify, esc } from "../lib/notify.js";
 
@@ -26,7 +26,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const fx = (n, d = 2) => Number(n || 0).toFixed(d);
 const pp = (n) => Number(Number(n).toPrecision(6));
 const dayStart = () => new Date(new Date().setUTCHours(0, 0, 0, 0));
-const exName = (c) => (c.exchange === "binance" ? "Binance" : "KuCoin") + (c.env === "demo" ? " (demo)" : "");
+const exName = (c) => exchangeName(c.exchange) + (c.env === "demo" ? " (demo)" : "");
 
 // ------------------------------------------------------------------ opening a trade from a signal
 async function skip(sig, reason, user, tell = true) {
@@ -53,7 +53,7 @@ function plan(p, g, price) {
 async function keyStillSafe(conn) {
   if (conn.checkedAt && Date.now() - new Date(conn.checkedAt).getTime() < KEY_RECHECK_MS) return true;
   const key = unseal(conn.keySealed), secret = unseal(conn.secretSealed);
-  const r = conn.exchange === "binance" ? await binanceCheck(key, secret) : await kucoinCheck(key, secret, unseal(conn.passphraseSealed));
+  const r = await checkKeyFor(conn.exchange, key, secret, conn.passphraseSealed ? unseal(conn.passphraseSealed) : undefined);
   if (/not answering/.test(r.error || "")) return true; // an outage is not a verdict on the key
   await Exchange.updateOne({ _id: conn._id }, r.ok ? { $set: { status: "ok", lastError: null, checkedAt: new Date(), usdtFree: r.usdtFree } } : { $set: { status: "error", lastError: r.error, checkedAt: new Date() } });
   return r.ok;

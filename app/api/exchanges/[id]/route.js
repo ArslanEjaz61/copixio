@@ -4,8 +4,7 @@ import { Exchange, Group, Trade } from "@/lib/models";
 import { unseal } from "@/lib/seal";
 import { limit } from "@/lib/rate";
 import { apiUser, bad, ok } from "@/lib/session-user";
-import { checkKey as binanceCheck } from "@/lib/exchanges/binance";
-import { checkKey as kucoinCheck } from "@/lib/exchanges/kucoin";
+import { checkKeyFor } from "@/lib/exchanges/check";
 import { exchangeView as publicView } from "@/lib/views";
 
 async function own(user, id) {
@@ -25,7 +24,7 @@ export async function POST(req, { params }) {
   let res;
   try {
     const key = unseal(x.keySealed), secret = unseal(x.secretSealed);
-    res = x.exchange === "binance" ? await binanceCheck(key, secret) : await kucoinCheck(key, secret, unseal(x.passphraseSealed));
+    res = await checkKeyFor(x.exchange, key, secret, x.passphraseSealed ? unseal(x.passphraseSealed) : undefined);
   } catch { res = { ok: false, error: "The saved key could not be read. Remove it and add it again." }; }
   x.checkedAt = new Date();
   if (res.ok) Object.assign(x, { status: "ok", lastError: null, usdtFree: res.usdtFree, ipRestricted: res.ipRestricted, env: res.env });

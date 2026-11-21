@@ -4,11 +4,12 @@ import { notFound } from "next/navigation";
 import { Exchange, Group, Payment, Signal, Telegram, Trade, User, PLANS, planOf } from "@/lib/models";
 import { ago, day, px, requireAdmin, standing, usd, when } from "@/lib/admin";
 import { PauseToggle, PlanSetter } from "@/components/admin/Actions";
+import { exchangeName } from "@/lib/exchanges/list";
 
 export const metadata = { title: "User" };
 export const dynamic = "force-dynamic";
 
-const exName = (e) => `${e.exchange === "binance" ? "Binance" : "KuCoin"}${e.env === "demo" ? " demo" : ""}`;
+const exName = (e) => exchangeName(e.exchange, e.env);
 const OUT = { traded: ["Traded", "ok"], skipped: ["Skipped", "wait"], not_a_signal: ["Not a signal", "info"], error: ["Error", "bad"], queued: ["Queued", "info"], processing: ["Placing", "info"] };
 
 export default async function AdminUser({ params }) {

@@ -5,14 +5,14 @@ import { seal, tail } from "@/lib/seal";
 import { limit } from "@/lib/rate";
 import { apiUser, bad, ok } from "@/lib/session-user";
 import { exchangeView as publicView } from "@/lib/views";
-import { checkKey as binanceCheck } from "@/lib/exchanges/binance";
-import { checkKey as kucoinCheck } from "@/lib/exchanges/kucoin";
+import { checkKeyFor } from "@/lib/exchanges/check";
+import { EXCHANGE_IDS, exchangeMeta } from "@/lib/exchanges/list";
 
 const Body = z.object({
-  exchange: z.enum(["binance", "kucoin"]),
+  exchange: z.enum(EXCHANGE_IDS),
   label: z.string().trim().max(40).optional(),
-  key: z.string().trim().min(10, "Paste the whole API key").max(200),
-  secret: z.string().trim().min(10, "Paste the whole secret key").max(200),
+  key: z.string().trim().min(10, "Paste the whole API key").max(300),
+  secret: z.string().trim().min(10, "Paste the whole secret key").max(4000), // Coinbase private keys are PEM blocks
   passphrase: z.string().trim().max(100).optional(),
 });
 
@@ -32,14 +32,16 @@ export async function POST(req) {
   let b;
   try { b = Body.parse(await req.json()); }
   catch (e) { return bad(e?.issues?.[0]?.message || "Check the form and try again."); }
-  if (b.exchange === "kucoin" && !b.passphrase) return bad("KuCoin keys also need the passphrase you set when creating the key.");
+  const meta = exchangeMeta(b.exchange);
+  if (meta.pass && !b.passphrase) return bad(`${meta.name} keys also need the passphrase you set when creating the key.`);
+  if (!meta.longSecret && b.secret.length > 200) return bad("That secret is too long. Paste only the secret key.");
 
   await db();
   const max = PLANS[planOf(user)].exchanges;
   if ((await Exchange.countDocuments({ userId: user._id })) >= Math.max(1, max))
     return bad(`Your plan allows ${Math.max(1, max)} exchange account${max > 1 ? "s" : ""}. Remove one first or change your plan.`, 403);
 
-  const res = b.exchange === "binance" ? await binanceCheck(b.key, b.secret) : await kucoinCheck(b.key, b.secret, b.passphrase);
+  const res = await checkKeyFor(b.exchange, b.key, b.secret, b.passphrase);
   if (!res.ok) return bad(res.error, 422);
 
   const doc = await Exchange.create({

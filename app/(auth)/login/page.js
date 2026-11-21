@@ -6,8 +6,11 @@ import { currentUser } from "@/lib/auth";
 export const metadata = { title: "Sign in" };
 export const dynamic = "force-dynamic";
 
-export default async function LoginPage() {
-  if (await currentUser()) redirect("/app");
+export default async function LoginPage({ searchParams }) {
+  if (await currentUser()) {
+    const { next = "" } = await searchParams;
+    redirect(/^\/(app|admin)(\/[\w\-/]*)?$/.test(next) ? next : "/app");
+  }
   return (
     <>
       <div>

@@ -1,0 +1,86 @@
+/* Admin panel: the app shell (app.css) plus what an operator screen needs. */
+.ad .ap-side { gap: 6px; }
+.ad-brand { display: flex; align-items: center; gap: 10px; margin: 2px 8px 22px; }
+.ad .ap-side .ad-brand .brand { margin: 0; }
+.ad-badge { font: 700 .66rem var(--font-body); letter-spacing: .1em; text-transform: uppercase; color: #14100A; background: var(--brass); border-radius: 4px; padding: 3px 6px; }
+.ad-count { background: var(--brass); color: #14100A; border-radius: 999px; padding: 1px 7px; font: 700 .72rem var(--font-mono); opacity: 1 !important; }
+.ad-back { margin: 14px 10px 0; color: var(--band-muted); font-size: .9rem; text-decoration: none; }
+.ad-back:hover { color: var(--band-text); }
+.ad .ap-mobilebar .ad-brand { margin: 0 0 10px; }
+
+/* overview figures */
+.ad-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.ad-kpis > div { padding: 18px 20px; border-left: 1px solid var(--line); display: grid; gap: 4px; align-content: start; }
+.ad-kpis > div:first-child { border-left: 0; }
+.ad-kpis .lab { font: 600 .72rem var(--font-body); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.ad-kpis b { font: 600 1.7rem var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.ad-kpis .sub { font-size: .86rem; color: var(--muted); }
+@media (max-width: 1100px) { .ad-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } .ad-kpis > div:nth-child(4) { border-left: 0; } .ad-kpis > div:nth-child(n+4) { border-top: 1px solid var(--line); } }
+@media (max-width: 600px) { .ad-kpis { grid-template-columns: 1fr 1fr; } .ad-kpis > div { border-left: 0 !important; border-top: 1px solid var(--line); } .ad-kpis > div:nth-child(-n+2) { border-top: 0; } .ad-kpis > div:nth-child(even) { border-left: 1px solid var(--line) !important; } }
+
+.ad-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+@media (max-width: 1000px) { .ad-grid { grid-template-columns: 1fr; } }
+.ad-stack { display: grid; gap: 24px; }
+.ad-body { padding: 18px 20px; }
+
+/* sign-ups chart */
+.ad-chart { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: 6px; align-items: end; height: 150px; padding: 18px 20px 6px; }
+.ad-chart .bar { display: grid; justify-items: center; gap: 4px; height: 100%; align-content: end; }
+.ad-chart .col { width: 100%; max-width: 30px; border-radius: 3px 3px 0 0; background: var(--ink); min-height: 2px; }
+.ad-chart .col.today { background: var(--brass); }
+.ad-chart .n { font: 600 .72rem var(--font-mono); color: var(--muted); }
+.ad-axis { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: 6px; padding: 0 20px 14px; }
+.ad-axis span { font: .68rem var(--font-mono); color: var(--muted); text-align: center; }
+
+/* funnel */
+.ad-funnel { display: grid; gap: 12px; padding: 18px 20px; }
+.ad-funnel .row { display: grid; grid-template-columns: 150px minmax(0, 1fr) 82px; gap: 12px; align-items: center; }
+.ad-funnel .track { height: 10px; background: var(--paper); border-radius: 999px; overflow: hidden; }
+.ad-funnel .fill { height: 100%; background: var(--ink); border-radius: 999px; }
+.ad-funnel .row:last-child .fill { background: var(--profit); }
+.ad-funnel .v { font: 600 .9rem var(--font-mono); text-align: right; }
+.ad-funnel .v small { color: var(--muted); font-weight: 400; }
+@media (max-width: 600px) { .ad-funnel .row { grid-template-columns: 110px minmax(0, 1fr) 64px; } }
+
+/* key/value lists */
+.ad-kv { margin: 0; padding: 0; }
+.ad-kv li { list-style: none; display: flex; justify-content: space-between; gap: 12px; padding: 11px 20px; border-bottom: 1px solid var(--line); align-items: center; }
+.ad-kv li:last-child { border-bottom: 0; }
+.ad-kv li > span:first-child { color: var(--muted); }
+.ad-kv b { font-family: var(--font-mono); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* needs-attention list */
+.ad-alerts { margin: 0; padding: 0; }
+.ad-alerts li { list-style: none; display: flex; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--line); align-items: flex-start; }
+.ad-alerts li:last-child { border-bottom: 0; }
+.ad-alerts .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 7px; flex: none; }
+.ad-alerts .dot.bad { background: var(--loss); } .ad-alerts .dot.wait { background: var(--warn); } .ad-alerts .dot.info { background: var(--info); }
+.ad-alerts a { color: var(--text); font-weight: 600; }
+
+/* filters */
+.ad-tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+.ad-tools .input { max-width: 320px; padding: 8px 12px; }
+.ad-seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 6px; overflow: hidden; flex-wrap: wrap; }
+.ad-seg a { padding: 7px 12px; font: 600 .88rem var(--font-body); text-decoration: none; color: var(--text); background: var(--surface); border-left: 1px solid var(--line-2); }
+.ad-seg a:first-child { border-left: 0; }
+.ad-seg a[aria-current="page"] { background: var(--ink); color: var(--on-ink); }
+.ad-seg a small { font-family: var(--font-mono); opacity: .7; margin-left: 5px; }
+
+.ad-user { display: flex; gap: 12px; align-items: center; min-width: 0; }
+.ad-user .av { width: 34px; height: 34px; }
+.ad-user b { display: block; }
+.ad-user a { color: var(--text); text-decoration: none; }
+.ad-user a:hover b { text-decoration: underline; text-underline-offset: 3px; }
+.ad .tbl td .hint { display: block; }
+.ad-text { white-space: pre-wrap; font-size: .9rem; max-width: 420px; }
+
+/* user page */
+.ad-head { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.ad-head .av { width: 52px; height: 52px; font-size: 1.1rem; }
+.ad-head h1 { font-size: clamp(1.4rem, 2vw, 1.8rem); font-weight: 800; letter-spacing: -.02em; }
+.ad-head p { color: var(--muted); }
+.ad-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.ad-field { display: grid; gap: 4px; font-size: .85rem; color: var(--muted); }
+.ad-field .input { padding: 8px 10px; min-width: 120px; }
+.ad-actions { display: grid; gap: 16px; padding: 18px 20px; }
+.ad-actions h3 { font-size: .95rem; font-weight: 700; }

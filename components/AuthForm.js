@@ -25,7 +25,7 @@ export default function AuthForm({ mode }) {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { setErr(j.error || "Something went wrong. Try again."); setField(j.field || null); setBusy(false); return; }
       const next = sp.get("next") || "";
-      router.replace(signup ? "/app?welcome=1" : /^\/app(\/[\w\-/]*)?$/.test(next) ? next : "/app");
+      router.replace(signup ? "/app?welcome=1" : /^\/(app|admin)(\/[\w\-/]*)?$/.test(next) ? next : "/app");
       router.refresh();
     } catch {
       setErr("Could not reach Copixio. Check your connection and try again.");

@@ -8,6 +8,7 @@ import { notify } from "@/lib/notify";
 const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("payment"), id: z.string(), decision: z.enum(["approve", "reject"]), note: z.string().max(300).optional() }),
   z.object({ action: z.literal("plan"), userId: z.string(), plan: z.enum(["none", "starter", "pro", "desk"]), days: z.coerce.number().int().min(0).max(3660) }),
+  z.object({ action: z.literal("pause"), userId: z.string(), paused: z.boolean() }),
 ]);
 
 const addMonths = (from, m) => { const d = new Date(Math.max(Date.now(), from ? new Date(from).getTime() : 0)); d.setUTCMonth(d.getUTCMonth() + m); return d; };
@@ -40,6 +41,11 @@ export async function POST(req) {
     if (!mongoose.isValidObjectId(b.userId)) return bad("Not found.", 404);
     const until = b.plan === "none" || b.days === 0 ? null : new Date(Date.now() + b.days * 864e5);
     await User.updateOne({ _id: b.userId }, { $set: { plan: b.plan, planUntil: until, trial: false } });
+    return ok();
+  }
+  if (b.action === "pause") {
+    if (!mongoose.isValidObjectId(b.userId)) return bad("Not found.", 404);
+    await User.updateOne({ _id: b.userId }, { $set: { botPaused: b.paused } });
     return ok();
   }
   return bad("Unknown action.");

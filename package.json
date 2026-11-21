@@ -9,7 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "ccxt": "4.5.18",
+    "ccxt": "4.5.85",
     "ioredis": "5.6.1",
     "mongoose": "8.15.1",
     "next": "15.5.29",

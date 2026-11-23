@@ -48,11 +48,12 @@ export async function POST(req) {
       // the page retries when the network drops; if the first request already sent a code, don't send another
       if (b.retry && t?.phone === b.phone && t.phoneCodeHash && Date.now() - new Date(t.pendingAt).getTime() < 90e3) return ok({ next: "code", via: t.codeVia || null, nextVia: t.codeNextVia || null });
       const { ip } = await clientMeta();
-      const okUser = await limit(`tg-code:${user._id}`, 5, 3600, { failClosed: true });
+      const okUser = await limit(`tg-code:${user._id}`, 8, 3600, { failClosed: true }); // 23 Nov: 8 (was 5) -- "Send again" counts too
       const okIp = await limit(`tg-code-ip:${ip}`, 10, 3600, { failClosed: true });
       const okAll = await limit("tg-code-all", 120, 3600, { failClosed: true });
       if (!okUser || !okIp || !okAll) return bad("Too many codes requested. Try again later.", 429);
-      const r = await sendCode(b.phone);
+      const reuse = t?.phone === b.phone && t?.pendingSessionSealed && t.status !== "connected" && Date.now() - new Date(t.pendingAt).getTime() < 60 * 6e4 ? t.pendingSessionSealed : null;
+      const r = await sendCode(b.phone, reuse).catch((e) => (reuse ? sendCode(b.phone) : Promise.reject(e)));
       tgLog(user._id, `code sent to ${mask(b.phone)} via ${r.via} (other way: ${r.nextVia || "none"}, timeout ${r.timeout ?? "-"} s)`);
       t ||= new Telegram({ userId: user._id });
       Object.assign(t, { phone: b.phone, phoneCodeHash: r.phoneCodeHash, pendingSessionSealed: r.pendingSessionSealed, pendingAt: new Date(), lastError: null, codeVia: r.via, codeNextVia: r.nextVia });
@@ -65,8 +66,12 @@ export async function POST(req) {
     if (b.step === "resend") {
       if (!t?.pendingSessionSealed || !t.phoneCodeHash || Date.now() - new Date(t.pendingAt).getTime() > 15 * 6e4)
         return bad("The sign-in timed out. Enter your phone number again.", 409);
-      if (!(await limit(`tg-code:${user._id}`, 5, 3600, { failClosed: true }))) return bad("Too many codes requested. Try again later.", 429);
-      const r = await resendCode({ pendingSessionSealed: t.pendingSessionSealed, phone: t.phone, phoneCodeHash: t.phoneCodeHash });
+      if (Date.now() - new Date(t.pendingAt).getTime() < 25e3) return bad("Wait a few seconds before asking for another code.", 429);
+      if (!(await limit(`tg-code:${user._id}`, 8, 3600, { failClosed: true }))) return bad("Too many codes requested. Try again in an hour, or use Scan QR code.", 429);
+      // the other way when Telegram offers one (usually SMS); otherwise a fresh code
+      const r = t.codeNextVia
+        ? await resendCode({ pendingSessionSealed: t.pendingSessionSealed, phone: t.phone, phoneCodeHash: t.phoneCodeHash }).catch((e) => (/SEND_CODE_UNAVAILABLE|PHONE_CODE_EXPIRED/.test(String(e?.errorMessage)) ? sendCode(t.phone, t.pendingSessionSealed) : Promise.reject(e)))
+        : await sendCode(t.phone, t.pendingSessionSealed).catch(() => sendCode(t.phone));
       tgLog(user._id, `code re-sent to ${mask(t.phone)} via ${r.via} (other way: ${r.nextVia || "none"})`);
       Object.assign(t, { phoneCodeHash: r.phoneCodeHash, pendingSessionSealed: r.pendingSessionSealed, pendingAt: new Date(), codeVia: r.via, codeNextVia: r.nextVia });
       await t.save();

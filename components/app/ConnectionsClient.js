@@ -217,6 +217,13 @@ function TelegramTile({ tg, setTg, groupsHref, hasExchange, configured }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [sent, setSent] = useState(null); // where Telegram sent the code
+  const [wait, setWait] = useState(0); // seconds until "Send again" is allowed
+  const [resent, setResent] = useState(null);
+  useEffect(() => {
+    if (wait <= 0) return undefined;
+    const t = setTimeout(() => setWait((w) => w - 1), 1000);
+    return () => clearTimeout(t);
+  }, [wait]);
   const connected = tg.status === "connected";
 
   async function submit(e) {
@@ -227,16 +234,18 @@ function TelegramTile({ tg, setTg, groupsHref, hasExchange, configured }) {
     const j = await api("/api/telegram", "POST", body);
     setBusy(false);
     if (!j.ok) return setErr(j.error);
-    if (j.via !== undefined) setSent({ via: j.via, nextVia: j.nextVia, email: j.email });
+    if (j.via !== undefined) { setSent({ via: j.via, nextVia: j.nextVia, email: j.email }); setWait(30); setResent(null); }
     if (j.next === "done") { setTg(j.telegram); setOpen(false); setStep("phone"); } else setStep(j.next);
   }
-  // 23 Nov: the code did not come -> Telegram sends it the other way (usually SMS)
+  // 23 Nov: "Didn't get the code? Send again" -- the other way when Telegram offers one (SMS), else a fresh code
   async function resend() {
     setBusy(true); setErr(null);
     const j = await api("/api/telegram", "POST", { step: "resend" });
     setBusy(false);
-    if (!j.ok) return setErr(j.error);
+    if (!j.ok) { setWait(30); return setErr(j.error); }
     setSent({ via: j.via, nextVia: j.nextVia, email: j.email });
+    setResent(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+    setWait(30);
   }
   async function logout() {
     if (!window.confirm("Disconnect Telegram? Your groups stop trading until you connect again.")) return;
@@ -298,7 +307,15 @@ function TelegramTile({ tg, setTg, groupsHref, hasExchange, configured }) {
             {step === "code" && (<div className="field"><label htmlFor="code">Login code</label>
               <input className="input num code-input" id="code" name="code" inputMode="numeric" autoComplete="one-time-code" placeholder="• • • • •" required autoFocus />
               <span className="hint" role="status">{codeWhere(sent)}</span>
-              {sent?.nextVia && <button className="btn-text" type="button" disabled={busy} onClick={resend}>{sent.nextVia === "sms" ? "No code? Send it by SMS" : sent.nextVia === "call" ? "No code? Get a phone call" : "No code? Send it another way"}</button>}</div>)}
+              <span className="hint">
+                {wait > 0 ? <>Didn&apos;t get the code? You can ask again in {wait} s.</> : (
+                  <button className="btn-text" type="button" disabled={busy} onClick={resend}>
+                    {sent?.nextVia === "sms" ? "Didn't get the code? Send it by SMS" : sent?.nextVia === "call" ? "Didn't get the code? Get a phone call" : "Didn't get the code? Send again"}
+                  </button>
+                )}
+                {" · "}<button className="btn-text" type="button" onClick={() => { setMode("qr"); setErr(null); }}>Use Scan QR code instead</button>
+              </span>
+              {resent && <span className="hint" role="status">A new code was sent at {resent}.</span>}</div>)}
             {step === "password" && (<div className="field"><label htmlFor="password">Two-step verification password</label>
               <input className="input" id="password" name="password" type="password" autoComplete="current-password" required autoFocus />
               <span className="hint">The password you set in Telegram → Privacy → Two-Step Verification.</span></div>)}

@@ -5,7 +5,11 @@ import { clientMeta } from "@/lib/auth";
 import { limit } from "@/lib/rate";
 import { apiUser, bad, ok } from "@/lib/session-user";
 import { announce } from "@/lib/redis";
-import { logOut, sendCode, signIn, tgError } from "@/lib/tg";
+import { logOut, resendCode, sendCode, signIn, tgError } from "@/lib/tg";
+
+// 23 Nov: every step leaves one log line (masked phone), so "no code came" can be answered from the server
+const mask = (p) => (p ? String(p).replace(/\d(?=\d{3})/g, "•") : "-");
+const tgLog = (uid, msg) => console.log(`${new Date().toISOString()} [tg-login] user ${uid} ${msg}`);
 
 export const runtime = "nodejs";
 
@@ -22,6 +26,7 @@ const Body = z.discriminatedUnion("step", [
   z.object({ step: z.literal("phone"), phone: z.string().trim().regex(/^\+\d{7,15}$/, "Use the full number with the country code, like +923001234567"), retry: z.boolean().optional() }),
   z.object({ step: z.literal("code"), code: z.string().trim().regex(/^\d[\d\s-]{3,10}$/, "Enter the code Telegram sent you"), retry: z.boolean().optional() }),
   z.object({ step: z.literal("password"), password: z.string().min(1).max(256), retry: z.boolean().optional() }),
+  z.object({ step: z.literal("resend") }),
   z.object({ step: z.literal("logout") }),
 ]);
 
@@ -41,18 +46,31 @@ export async function POST(req) {
       // site (so nobody can use Copixio to spam login codes, or get our Telegram app id rate-limited for everyone)
       if (!(await Exchange.exists({ userId: user._id, status: "ok" }))) return bad("Connect your exchange first, then Telegram.", 409);
       // the page retries when the network drops; if the first request already sent a code, don't send another
-      if (b.retry && t?.phone === b.phone && t.phoneCodeHash && Date.now() - new Date(t.pendingAt).getTime() < 90e3) return ok({ next: "code" });
+      if (b.retry && t?.phone === b.phone && t.phoneCodeHash && Date.now() - new Date(t.pendingAt).getTime() < 90e3) return ok({ next: "code", via: t.codeVia || null, nextVia: t.codeNextVia || null });
       const { ip } = await clientMeta();
       const okUser = await limit(`tg-code:${user._id}`, 5, 3600, { failClosed: true });
       const okIp = await limit(`tg-code-ip:${ip}`, 10, 3600, { failClosed: true });
       const okAll = await limit("tg-code-all", 120, 3600, { failClosed: true });
       if (!okUser || !okIp || !okAll) return bad("Too many codes requested. Try again later.", 429);
       const r = await sendCode(b.phone);
+      tgLog(user._id, `code sent to ${mask(b.phone)} via ${r.via} (other way: ${r.nextVia || "none"}, timeout ${r.timeout ?? "-"} s)`);
       t ||= new Telegram({ userId: user._id });
-      Object.assign(t, { phone: b.phone, phoneCodeHash: r.phoneCodeHash, pendingSessionSealed: r.pendingSessionSealed, pendingAt: new Date(), lastError: null });
+      Object.assign(t, { phone: b.phone, phoneCodeHash: r.phoneCodeHash, pendingSessionSealed: r.pendingSessionSealed, pendingAt: new Date(), lastError: null, codeVia: r.via, codeNextVia: r.nextVia });
       if (t.status !== "connected") t.status = "pending";
       await t.save();
-      return ok({ next: "code" });
+      return ok({ next: "code", via: r.via, nextVia: r.nextVia, email: r.email });
+    }
+
+    // 23 Nov: "the code did not come" -> ask Telegram to send it the other way (usually SMS)
+    if (b.step === "resend") {
+      if (!t?.pendingSessionSealed || !t.phoneCodeHash || Date.now() - new Date(t.pendingAt).getTime() > 15 * 6e4)
+        return bad("The sign-in timed out. Enter your phone number again.", 409);
+      if (!(await limit(`tg-code:${user._id}`, 5, 3600, { failClosed: true }))) return bad("Too many codes requested. Try again later.", 429);
+      const r = await resendCode({ pendingSessionSealed: t.pendingSessionSealed, phone: t.phone, phoneCodeHash: t.phoneCodeHash });
+      tgLog(user._id, `code re-sent to ${mask(t.phone)} via ${r.via} (other way: ${r.nextVia || "none"})`);
+      Object.assign(t, { phoneCodeHash: r.phoneCodeHash, pendingSessionSealed: r.pendingSessionSealed, pendingAt: new Date(), codeVia: r.via, codeNextVia: r.nextVia });
+      await t.save();
+      return ok({ next: "code", via: r.via, nextVia: r.nextVia, email: r.email });
     }
 
     if (b.step === "code" || b.step === "password") {
@@ -64,11 +82,13 @@ export async function POST(req) {
       if (!(await limit(`tg-signin:${user._id}`, 10, 900, { failClosed: true }))) return bad("Too many tries. Wait 15 minutes.", 429);
       const r = await signIn({ pendingSessionSealed: t.pendingSessionSealed, phone: t.phone, phoneCodeHash: t.phoneCodeHash, code: b.code, password: b.password });
       if (r.needPassword) {
+        tgLog(user._id, "code accepted, two-step password needed");
         t.pendingSessionSealed = r.pendingSessionSealed; await t.save();
         return ok({ next: "password" });
       }
       Object.assign(t, { sessionSealed: r.sessionSealed, tgUserId: r.tgUserId, tgName: r.tgName, status: "connected", connectedAt: new Date(), lastError: null, pendingSessionSealed: null, phoneCodeHash: null });
       await t.save();
+      tgLog(user._id, `connected by phone (${b.step})`);
       await announce("telegram", user._id);
       return ok({ next: "done", telegram: view(t.toObject()) });
     }
@@ -81,6 +101,7 @@ export async function POST(req) {
       return ok({ telegram: { status: "none" } });
     }
   } catch (e) {
+    tgLog(user._id, `${b.step} failed: ${String(e?.errorMessage || e?.message || e).slice(0, 200)}`);
     return bad(tgError(e), 422);
   }
   return bad("Unknown step.");

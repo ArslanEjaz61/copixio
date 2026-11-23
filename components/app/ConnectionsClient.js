@@ -164,7 +164,7 @@ function QrLogin({ onDone, onCancel }) {
         {(st.status === "waiting" || st.status === "starting") && (
           <>
             <div className="qr-box">{st.qr ? <img src={st.qr} alt="Telegram login QR code" width="220" height="220" /> : <span className="hint">Preparing the code…</span>}</div>
-            <p className="hint" role="status">Waiting for you to scan… The code refreshes by itself.</p>
+            <p className="hint" role="status">Waiting for you to scan… The code refreshes by itself. Scan it from inside Telegram (Settings → Devices → Link Desktop Device), not with the phone&apos;s camera app.</p>
             <div className="actions"><button className="btn-text" type="button" onClick={cancel}>Cancel</button></div>
           </>
         )}
@@ -201,11 +201,22 @@ function QrLogin({ onDone, onCancel }) {
 
 // ---------------------------------------------------------------- the Telegram tile: sign-in stepper
 const STEPS = [["phone", "Phone"], ["code", "Code"], ["password", "Password"]];
+// 23 Nov: say where the code really went (it is usually NOT an SMS)
+function codeWhere(s) {
+  const v = s?.via;
+  if (v === "app") return "Telegram sent the code inside the Telegram app, not by SMS: open Telegram on a phone or computer where you are already logged in, chat “Telegram” (blue tick).";
+  if (v === "sms") return "Telegram sent the code by SMS to this number.";
+  if (v === "call") return "Telegram is calling this number; the code is in the call (or the last digits of the calling number).";
+  if (v === "email") return `Telegram sent the code to your login email${s.email ? ` (${s.email})` : ""}.`;
+  if (v === "fragment") return "Telegram sent the code to your Fragment number (fragment.com).";
+  return "Open Telegram: the code is in the chat from “Telegram”.";
+}
 function TelegramTile({ tg, setTg, groupsHref, hasExchange, configured }) {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState("phone");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [sent, setSent] = useState(null); // where Telegram sent the code
   const connected = tg.status === "connected";
 
   async function submit(e) {
@@ -216,7 +227,16 @@ function TelegramTile({ tg, setTg, groupsHref, hasExchange, configured }) {
     const j = await api("/api/telegram", "POST", body);
     setBusy(false);
     if (!j.ok) return setErr(j.error);
+    if (j.via !== undefined) setSent({ via: j.via, nextVia: j.nextVia, email: j.email });
     if (j.next === "done") { setTg(j.telegram); setOpen(false); setStep("phone"); } else setStep(j.next);
+  }
+  // 23 Nov: the code did not come -> Telegram sends it the other way (usually SMS)
+  async function resend() {
+    setBusy(true); setErr(null);
+    const j = await api("/api/telegram", "POST", { step: "resend" });
+    setBusy(false);
+    if (!j.ok) return setErr(j.error);
+    setSent({ via: j.via, nextVia: j.nextVia, email: j.email });
   }
   async function logout() {
     if (!window.confirm("Disconnect Telegram? Your groups stop trading until you connect again.")) return;
@@ -277,7 +297,8 @@ function TelegramTile({ tg, setTg, groupsHref, hasExchange, configured }) {
               <span className="hint">With country code. Telegram sends a login code to your app.</span></div>)}
             {step === "code" && (<div className="field"><label htmlFor="code">Login code</label>
               <input className="input num code-input" id="code" name="code" inputMode="numeric" autoComplete="one-time-code" placeholder="• • • • •" required autoFocus />
-              <span className="hint">Open Telegram: the code is in the chat from “Telegram”.</span></div>)}
+              <span className="hint" role="status">{codeWhere(sent)}</span>
+              {sent?.nextVia && <button className="btn-text" type="button" disabled={busy} onClick={resend}>{sent.nextVia === "sms" ? "No code? Send it by SMS" : sent.nextVia === "call" ? "No code? Get a phone call" : "No code? Send it another way"}</button>}</div>)}
             {step === "password" && (<div className="field"><label htmlFor="password">Two-step verification password</label>
               <input className="input" id="password" name="password" type="password" autoComplete="current-password" required autoFocus />
               <span className="hint">The password you set in Telegram → Privacy → Two-Step Verification.</span></div>)}

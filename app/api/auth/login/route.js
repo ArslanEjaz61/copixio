@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { User } from "@/lib/models";
-import { clientMeta, createSession, sameOrigin, verifyPassword } from "@/lib/auth";
+import { clientMeta, codeSignup, createSession, issueCode, sameOrigin, verifyPassword } from "@/lib/auth";
 import { limit } from "@/lib/rate";
+import { sendCodeEmail } from "@/lib/mail";
 
 const Body = z.object({
   email: z.string().trim().toLowerCase().email().max(200),
@@ -29,6 +30,16 @@ export async function POST(req) {
   const user = await User.findOne({ email: body.email });
   const good = await verifyPassword(body.password, user ? user.passwordHash : DUMMY);
   if (!user || !good) return NextResponse.json({ error: WRONG }, { status: 401 });
+
+  // 24 Nov: an account whose email was never confirmed gets a code instead of a session
+  if (codeSignup() && !user.emailVerifiedAt) {
+    if (!(await limit(`code-send:${user.email}`, 6, 3600, { failClosed: true })))
+      return NextResponse.json({ error: "We already sent several codes to this email. Check spam, or try again in an hour." }, { status: 429 });
+    const code = await issueCode(user._id);
+    const mail = await sendCodeEmail(user.email, code).catch(() => ({ sent: false }));
+    if (!mail.sent) return NextResponse.json({ error: "We could not send the confirmation email. Try again in a minute." }, { status: 502 });
+    return NextResponse.json({ ok: true, next: "code", email: user.email });
+  }
 
   user.lastLoginAt = new Date();
   // the admin role is never granted here: it is set on the server with scripts/make-admin.mjs (an email that anyone

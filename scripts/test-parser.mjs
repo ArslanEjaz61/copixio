@@ -15,6 +15,12 @@ const cases = [
   ["Don't buy BTC/USDT now, wait for 60000", { ok: false }],
   ["#BNB/USDT LONG\nEntry: market\nSL 5%\nTP 700", { base: "BNB", side: "long", stop: null, targets: [700] }],
   ["ADA/USDT long\nEntry 0.45\nTarget 0.50\nStop 3x", { base: "ADA", stop: null }],
+  // 25 Nov: Tradex posts (bare coin first, $ before prices)
+  ["PIEVERSE Market entry: $3.64 Stop-loss: $3 Target: $5.3", { base: "PIEVERSE", side: "long", entryLow: 3.64, targets: [5.3], stop: 3 }],
+  ["BTC Entry: 57850 SL: 55081 TP: 64800", { base: "BTC", side: "long", entryLow: 57850, targets: [64800], stop: 55081 }],
+  ["ETH Entry: 3000 SL: 3100 TP: 2800", { base: "ETH", side: "short", stop: 3100, targets: [2800] }],
+  ["GM fam, entry soon, stop by later for targets", { ok: false }],
+  ["Hello Entry: 5 SL: 4 TP: 6", { ok: false }],
 ];
 
 let fail = 0;

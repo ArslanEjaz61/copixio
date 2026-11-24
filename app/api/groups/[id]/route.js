@@ -5,6 +5,7 @@ import { Exchange, Group, PLANS, planOf } from "@/lib/models";
 import { apiUser, bad, ok } from "@/lib/session-user";
 import { announce } from "@/lib/redis";
 import { groupView } from "@/lib/views";
+import { FUTURES_IDS, exchangeName } from "@/lib/exchanges/list";
 
 const num = (min, max) => z.coerce.number().min(min).max(max);
 const Rules = z.object({
@@ -22,6 +23,8 @@ const Rules = z.object({
   moveSlToEntry: z.boolean(),
   dailyLossUsdt: num(0, 1e6),
   maxEntryGapPct: num(0, 50),
+  market: z.enum(["spot", "futures", "both"]).optional().default("spot"), // 24 Nov
+  leverage: z.coerce.number().int().min(1).max(20).optional().default(5),
 });
 
 async function own(user, id) {
@@ -40,7 +43,9 @@ export async function PUT(req, { params }) {
   try { b = Rules.parse(await req.json()); } catch (e) { return bad(e?.issues?.[0] ? `${e.issues[0].path.join(".")}: ${e.issues[0].message}` : "Check the rules and try again."); }
 
   if (b.exchangeId) {
-    if (!mongoose.isValidObjectId(b.exchangeId) || !(await Exchange.exists({ _id: b.exchangeId, userId: user._id }))) return bad("Choose one of your connected exchanges.");
+    const x = mongoose.isValidObjectId(b.exchangeId) ? await Exchange.findOne({ _id: b.exchangeId, userId: user._id }, { exchange: 1 }).lean() : null;
+    if (!x) return bad("Choose one of your connected exchanges.");
+    if (b.market !== "spot" && !FUTURES_IDS.includes(x.exchange)) return bad(`Futures are not available on ${exchangeName(x.exchange)} in Copixio yet. Use Spot, or an exchange with futures (Binance, KuCoin, OKX, Bitget, HTX).`);
   }
   if (b.enabled) {
     if (!b.exchangeId) return bad("Choose the exchange this group trades on before switching it on.");

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { exchangeMeta } from "@/lib/exchanges/list";
+import { exchangeMeta, FUTURES_IDS } from "@/lib/exchanges/list";
 
 async function api(path, method = "GET", body) {
   const r = await fetch(path, { method, headers: body ? { "Content-Type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined }).catch(() => null);
@@ -12,7 +12,12 @@ const tone = (s) => TONES[[...String(s)].reduce((a, c) => (a * 31 + c.charCodeAt
 const initials = (t) => String(t || "?").replace(/[^\p{L}\p{N} ]/gu, "").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "#";
 const Avatar = ({ title, size = 36 }) => <span className="av" style={{ background: tone(title), width: size, height: size }} aria-hidden="true">{initials(title)}</span>;
 
-const DEFAULTS = { sizeMode: "fixed", sizeUsdt: 20, sizePercent: 5, maxOpen: 3, slMode: "signal", slPercent: 3, tpMode: "signal", tpPercent: 4, tpSplit: "even", moveSlToEntry: true, dailyLossUsdt: 0, maxEntryGapPct: 2 };
+const DEFAULTS = { sizeMode: "fixed", sizeUsdt: 20, sizePercent: 5, maxOpen: 3, slMode: "signal", slPercent: 3, tpMode: "signal", tpPercent: 4, tpSplit: "even", moveSlToEntry: true, dailyLossUsdt: 0, maxEntryGapPct: 2, market: "spot", leverage: 5 };
+const MARKET_HINT = {
+  spot: "Long (buy) signals are bought on spot. Short signals are skipped.",
+  futures: "Long and short signals are opened on USDT futures with your leverage, isolated margin.",
+  both: "A long signal is bought on spot AND opened on futures (two trades). A short signal goes to futures.",
+};
 
 function Seg({ value, onChange, options }) {
   return (
@@ -29,7 +34,7 @@ function Rules({ group, exchanges, onSaved, onRemoved }) {
   const set = (k) => (v) => { setG((x) => ({ ...x, [k]: v?.target ? (v.target.type === "checkbox" ? v.target.checked : v.target.value) : v })); setDirty(true); };
 
   async function save(enabled) {
-    const nums = ["sizeUsdt", "sizePercent", "maxOpen", "slPercent", "tpPercent", "dailyLossUsdt", "maxEntryGapPct"];
+    const nums = ["sizeUsdt", "sizePercent", "maxOpen", "slPercent", "tpPercent", "dailyLossUsdt", "maxEntryGapPct", "leverage"];
     if (nums.some((k) => g[k] === "" || g[k] === null || Number.isNaN(Number(g[k])))) return setMsg({ bad: true, text: "Fill in every number (use 0 for “no limit”)." });
     setBusy(true); setMsg(null);
     const { id, chatId, title, kind, ...rules } = g; // eslint-disable-line no-unused-vars
@@ -60,6 +65,25 @@ function Rules({ group, exchanges, onSaved, onRemoved }) {
             {exchanges.length === 0 && <option value="">Connect an exchange first</option>}
             {exchanges.map((x) => <option key={x.id} value={x.id}>{exchangeMeta(x.exchange).name}{x.env === "demo" ? " · demo" : ""}{x.label ? ` · ${x.label}` : ""}</option>)}
           </select>
+        </div>
+      </section>
+
+      <section className="rsec">
+        <div className="rsec-t"><b>Market</b><span className="hint">Spot, futures, or both.</span></div>
+        <div className="rsec-b two">
+          <div className="field"><label>Trade signals on</label>
+            <Seg value={g.market} onChange={set("market")} options={[["spot", "Spot"], ["futures", "Futures"], ["both", "Both"]]} />
+            <span className="hint">{MARKET_HINT[g.market]}</span>
+            {g.market !== "spot" && exchanges.length > 0 && !FUTURES_IDS.includes(exchanges.find((x) => x.id === g.exchangeId)?.exchange) && (
+              <span className="hint" style={{ color: "var(--loss)" }}>Futures are not available on this exchange in Copixio yet (Binance, KuCoin, OKX, Bitget and HTX are).</span>
+            )}
+          </div>
+          {g.market !== "spot" && (
+            <div className="field"><label>Leverage (futures)</label>
+              <div className="input-group"><input className="input num" type="number" min="1" max="20" step="1" value={g.leverage} onChange={set("leverage")} aria-label="Futures leverage" /><span className="suffix">x</span></div>
+              <span className="hint">Isolated margin. The size per trade is your margin; the position is size × leverage. A stop past the liquidation price is skipped.</span>
+            </div>
+          )}
         </div>
       </section>
 
@@ -104,7 +128,7 @@ function Rules({ group, exchanges, onSaved, onRemoved }) {
         </div>
       </section>
 
-      <p className="hint" style={{ padding: "0 22px" }}>Spot trading: only long (buy) signals are traded. Short signals are skipped and shown in the signal log.</p>
+      <p className="hint" style={{ padding: "0 22px" }}>{g.market === "spot" ? "Spot trading: only long (buy) signals are traded. Short signals are skipped and shown in the signal log." : "Futures: for a short, the stop sits above the entry and the targets below it. The bot watches the stop every few seconds and closes at market."}</p>
       {msg && <div className={`note ${msg.bad ? "bad" : "ok"}`} role="status" style={{ margin: "0 22px" }}>{msg.text}</div>}
 
       <footer className="rules-f">

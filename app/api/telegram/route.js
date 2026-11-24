@@ -41,6 +41,8 @@ export async function POST(req) {
   let t = await Telegram.findOne({ userId: user._id });
 
   try {
+    // 24 Nov: QR only (Telegram holds back codes for apps like Copixio). TG_PHONE_LOGIN=on brings the phone sign-in back.
+    if ((b.step === "phone" || b.step === "resend") && process.env.TG_PHONE_LOGIN !== "on") return bad("Sign in with Scan QR code: in Telegram open Settings → Devices → Link Desktop Device.", 410);
     if (b.step === "phone") {
       // codes go to real phones: a working exchange key first, then limits per account, per network and for the whole
       // site (so nobody can use Copixio to spam login codes, or get our Telegram app id rate-limited for everyone)

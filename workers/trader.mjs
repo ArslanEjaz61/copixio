@@ -7,11 +7,15 @@
 //  - the stop loss also sits ON the exchange (stop-limit), so a position stays protected while this worker is down;
 //    whenever the bot cancels it (to sell a target) and the sell does not go through, the stop is put back;
 //  - one trade is managed by one loop at a time, always from a fresh read of the database.
+// 24 Nov: futures (lib/exchanges/futures.js). A group trades on spot, futures or both: spot = longs only; futures =
+// long and short; both = a long is bought on spot AND opened on futures, a short goes to futures. Futures run on
+// isolated margin with the group's leverage; their stop is watched by this worker (no stop order on the exchange).
 try { process.loadEnvFile(new URL("../.env", import.meta.url)); } catch { /* env from pm2 */ }
 import Redis from "ioredis";
 import { db } from "../lib/db.js";
 import { Exchange, Group, Signal, Trade, User, PLANS, planOf } from "../lib/models.js";
 import { adapterFor, floorTo } from "../lib/exchanges/adapter.js";
+import { futuresFor } from "../lib/exchanges/futures.js";
 import { checkKeyFor } from "../lib/exchanges/check.js";
 import { exchangeName } from "../lib/exchanges/list.js";
 import { unseal } from "../lib/seal.js";
@@ -27,6 +31,7 @@ const fx = (n, d = 2) => Number(n || 0).toFixed(d);
 const pp = (n) => Number(Number(n).toPrecision(6));
 const dayStart = () => new Date(new Date().setUTCHours(0, 0, 0, 0));
 const exName = (c) => exchangeName(c.exchange) + (c.env === "demo" ? " (demo)" : "");
+const LIVE = ["opening", "open", "closing"];
 
 // ------------------------------------------------------------------ opening a trade from a signal
 async function skip(sig, reason, user, tell = true) {
@@ -35,18 +40,30 @@ async function skip(sig, reason, user, tell = true) {
   if (user && tell) await notify(user, `⏭ Signal skipped (${esc(sig.parsed?.base || "?")}): ${esc(reason)}`);
 }
 
-// stop and targets for this entry price, from the signal or the group's own percentages
+// stop and targets for this entry price, from the signal or the group's own percentages (long)
 function plan(p, g, price) {
   let stop = g.slMode === "percent" || !p.stop ? price * (1 - g.slPercent / 100) : p.stop;
   if (!(stop < price)) return { error: `the stop loss ${pp(stop)} is not below the market price ${pp(price)}` };
   if (stop < price * 0.5) return { error: `the stop loss ${pp(stop)} is more than 50% below the price ${pp(price)}; that does not look like a real stop` };
   let tps = g.tpMode === "percent" || !p.targets?.length ? [price * (1 + g.tpPercent / 100)] : p.targets.filter((t) => t > price);
   if (!tps.length) return { error: "every target is already below the market price" };
+  return { stop, targets: split(tps, g) };
+}
+// the same for a short: stop above, targets below (nearest first)
+function planShort(p, g, price) {
+  let stop = g.slMode === "percent" || !p.stop ? price * (1 + g.slPercent / 100) : p.stop;
+  if (!(stop > price)) return { error: `the stop loss ${pp(stop)} is not above the market price ${pp(price)}` };
+  if (stop > price * 1.5) return { error: `the stop loss ${pp(stop)} is more than 50% above the price ${pp(price)}; that does not look like a real stop` };
+  let tps = g.tpMode === "percent" || !p.targets?.length ? [price * (1 - g.tpPercent / 100)] : p.targets.filter((t) => t < price).sort((a, b) => b - a);
+  if (!tps.length) return { error: "every target is already above the market price" };
+  return { stop, targets: split(tps, g) };
+}
+function split(tps, g) {
   let shares;
   if (tps.length === 1 || g.tpSplit === "first") { tps = [tps[0]]; shares = [100]; }
   else if (g.tpSplit === "half") { tps = [tps[0], tps[tps.length - 1]]; shares = [50, 50]; }
   else shares = tps.map(() => 100 / tps.length);
-  return { stop, targets: tps.map((x, i) => ({ price: x, share: shares[i], done: false })) };
+  return tps.map((x, i) => ({ price: x, share: shares[i], done: false }));
 }
 
 // The key is re-checked every few hours before trading: it must still trade and still be unable to withdraw.
@@ -59,6 +76,12 @@ async function keyStillSafe(conn) {
   return r.ok;
 }
 
+async function dailyLossHit(g) {
+  if (!(g.dailyLossUsdt > 0)) return false;
+  const day = (await Trade.find({ groupId: g._id, status: "closed", closedAt: { $gte: dayStart() } }, { pnlUsdt: 1 }).lean()).reduce((a, t) => a + (t.pnlUsdt || 0), 0);
+  return day <= -g.dailyLossUsdt;
+}
+
 async function openTrade(signalId) {
   const sig = await Signal.findOneAndUpdate({ _id: signalId, outcome: "queued" }, { $set: { outcome: "processing" } }, { new: true }).lean();
   if (!sig) return; // already handled
@@ -69,41 +92,60 @@ async function openTrade(signalId) {
   if (pl === "none") return skip(sig, "no plan is active", user, false);
   if (!g.enabled || !g.exchangeId) return skip(sig, "this group is switched off", user, false);
   const p = sig.parsed;
-  if (p?.side !== "long") return skip(sig, "not a long signal (spot trading buys only)", user, false);
+  const market = g.market || "spot";
+  const side = p?.side === "short" ? "short" : p?.side === "long" ? "long" : null;
+  if (!side) return skip(sig, "no direction in the signal", user, false);
+  // which legs this signal opens
+  const legs = market === "spot" ? (side === "long" ? ["spot"] : []) : market === "futures" ? ["futures"] : side === "long" ? ["spot", "futures"] : ["futures"];
+  if (!legs.length) return skip(sig, "a short signal; this group trades spot only (choose Futures or Both to trade shorts)", user, false);
 
   const conn = await Exchange.findOne({ _id: g.exchangeId, userId: user._id }).lean();
   if (!conn || conn.status !== "ok") return skip(sig, "the exchange key for this group is not working", user);
   if (!(await keyStillSafe(conn))) return skip(sig, "the exchange key failed its safety check (it may allow withdrawals now). Check it in Exchanges", user);
+
+  const results = [];
+  for (const leg of legs) {
+    const r = await (leg === "spot" ? openSpot(sig, user, g, conn, p, pl) : openFutures(sig, user, g, conn, p, pl, side))
+      .catch((e) => ({ error: e.message }));
+    results.push({ leg, ...r });
+  }
+  const tag = (r) => (legs.length > 1 ? `${r.leg}: ` : "");
+  const traded = results.filter((r) => r.tradeId);
+  const notOk = results.filter((r) => !r.tradeId);
+  for (const r of notOk) if (r.skip) { log(`skip ${sig._id} ${r.leg}: ${r.skip}`); if (r.tell !== false) await notify(user, `⏭ ${legs.length > 1 ? `${r.leg[0].toUpperCase()}${r.leg.slice(1)} ` : ""}signal skipped (${esc(p.base)}): ${esc(r.skip)}`); }
+  const reason = notOk.map((r) => tag(r) + (r.skip || r.error)).join(" · ") || null;
+  if (traded.length) await Signal.updateOne({ _id: sig._id }, { $set: { outcome: "traded", tradeId: traded[0].tradeId, reason } });
+  else await Signal.updateOne({ _id: sig._id }, { $set: { outcome: notOk.some((r) => r.error) ? "error" : "skipped", reason } });
+}
+
+// spot: buy (longs only)
+async function openSpot(sig, user, g, conn, p, pl) {
   const ex = adapterFor(conn);
   const symbol = ex.symbolFor(p.base);
   const info = await ex.info(symbol).catch(() => null);
-  if (!info) return skip(sig, `${p.base}/USDT is not traded on ${exName(conn)}`, user);
+  if (!info) return { skip: `${p.base}/USDT is not traded on ${exName(conn)}` };
 
-  const live = ["opening", "open", "closing"];
-  if ((await Trade.countDocuments({ userId: user._id, status: { $in: live } })) >= PLANS[pl].open) return skip(sig, `your plan allows ${PLANS[pl].open} open trades at a time`, user);
-  const openGroup = await Trade.countDocuments({ groupId: g._id, status: { $in: live } });
-  if (openGroup >= g.maxOpen) return skip(sig, `this group already has ${openGroup} open trades (limit ${g.maxOpen})`, user);
-  if (await Trade.exists({ userId: user._id, symbol, exchangeId: conn._id, status: { $in: live } })) return skip(sig, `a ${p.base} trade is already open on this account`, user);
-  if (g.dailyLossUsdt > 0) {
-    const day = (await Trade.find({ groupId: g._id, status: "closed", closedAt: { $gte: dayStart() } }, { pnlUsdt: 1 }).lean()).reduce((a, t) => a + (t.pnlUsdt || 0), 0);
-    if (day <= -g.dailyLossUsdt) return skip(sig, `the daily loss limit of ${g.dailyLossUsdt} USDT is reached for this group`, user);
-  }
+  if ((await Trade.countDocuments({ userId: user._id, status: { $in: LIVE } })) >= PLANS[pl].open) return { skip: `your plan allows ${PLANS[pl].open} open trades at a time` };
+  const openGroup = await Trade.countDocuments({ groupId: g._id, status: { $in: LIVE } });
+  if (openGroup >= g.maxOpen) return { skip: `this group already has ${openGroup} open trades (limit ${g.maxOpen})` };
+  if (await Trade.exists({ userId: user._id, symbol, exchangeId: conn._id, status: { $in: LIVE } })) return { skip: `a ${p.base} trade is already open on this account` };
+  if (await dailyLossHit(g)) return { skip: `the daily loss limit of ${g.dailyLossUsdt} USDT is reached for this group` };
 
   const price = await ex.price(symbol);
-  if (!(price > 0)) return skip(sig, "no market price", user);
+  if (!(price > 0)) return { skip: "no market price" };
   if (p.entryHigh && g.maxEntryGapPct > 0 && price > p.entryHigh * (1 + g.maxEntryGapPct / 100))
-    return skip(sig, `price ${pp(price)} already ran ${fx((price / p.entryHigh - 1) * 100)}% above the entry ${p.entryHigh}`, user);
-  if (p.stop && price <= p.stop) return skip(sig, `price ${pp(price)} is already at or below the stop ${p.stop}`, user);
+    return { skip: `price ${pp(price)} already ran ${fx((price / p.entryHigh - 1) * 100)}% above the entry ${p.entryHigh}` };
+  if (p.stop && price <= p.stop) return { skip: `price ${pp(price)} is already at or below the stop ${p.stop}` };
   const pl2 = plan(p, g, price);
-  if (pl2.error) return skip(sig, pl2.error, user);
+  if (pl2.error) return { skip: pl2.error };
 
   const free = await ex.usdtFree();
   let usdt = g.sizeMode === "percent" ? free * (g.sizePercent / 100) : g.sizeUsdt;
   usdt = Math.floor(usdt * 100) / 100;
-  if (usdt > free) return skip(sig, `not enough USDT: ${fx(free)} free, the rule needs ${fx(usdt)}`, user);
-  if (usdt < Math.max(info.minNotional || 5, 5)) return skip(sig, `trade size ${fx(usdt)} USDT is below the exchange minimum`, user);
+  if (usdt > free) return { skip: `not enough USDT: ${fx(free)} free, the rule needs ${fx(usdt)}` };
+  if (usdt < Math.max(info.minNotional || 5, 5)) return { skip: `trade size ${fx(usdt)} USDT is below the exchange minimum` };
 
-  const trade = await Trade.create({ userId: user._id, groupId: g._id, signalId: sig._id, exchangeId: conn._id, exchange: conn.exchange, env: conn.env, symbol, base: p.base, status: "opening", stopPrice: pl2.stop, targets: pl2.targets });
+  const trade = await Trade.create({ userId: user._id, groupId: g._id, signalId: sig._id, exchangeId: conn._id, exchange: conn.exchange, env: conn.env, symbol, base: p.base, market: "spot", side: "long", status: "opening", stopPrice: pl2.stop, targets: pl2.targets });
   const clientId = `cx${trade._id}`;
   await Trade.updateOne({ _id: trade._id }, { $set: { clientOrderId: clientId } });
 
@@ -116,14 +158,13 @@ async function openTrade(signalId) {
   if (!buy || !(buy.qty > 0)) {
     const why = refused ? `the exchange refused the buy: ${refused.message}` : "the exchange did not answer and no buy was found";
     await Trade.updateOne({ _id: trade._id }, { $set: { status: "failed", error: why } });
-    await Signal.updateOne({ _id: sig._id }, { $set: { outcome: "error", reason: why, tradeId: trade._id } });
     await notify(user, `❌ ${esc(p.base)}: ${esc(why)}. No trade was opened.`);
-    return;
+    return { error: why };
   }
   await adopt(trade._id, buy, info, ex, symbol, pl2.stop, clientId);
-  await Signal.updateOne({ _id: sig._id }, { $set: { outcome: "traded", tradeId: trade._id, reason: null } });
   log(`BUY ${conn.exchange} ${symbol} ${buy.net} @ ${buy.avg} (${fx(buy.quote)} USDT) stop ${pl2.stop}`);
-  await notify(user, `✅ <b>Bought ${esc(p.base)}</b> on ${exName(conn)}\nSize ${fx(buy.quote)} USDT @ ${pp(buy.avg)}\nStop ${pp(pl2.stop)}\nTargets ${pl2.targets.map((t) => pp(t.price)).join(" · ")}\nGroup: ${esc(g.title)}`);
+  await notify(user, `✅ <b>Bought ${esc(p.base)}</b> on ${exName(conn)} (spot)\nSize ${fx(buy.quote)} USDT @ ${pp(buy.avg)}\nStop ${pp(pl2.stop)}\nTargets ${pl2.targets.map((t) => pp(t.price)).join(" · ")}\nGroup: ${esc(g.title)}`);
+  return { tradeId: trade._id };
 }
 
 // record the buy and put the protective stop on the exchange (looked up first, so a restart never doubles it)
@@ -135,16 +176,90 @@ async function adopt(tradeId, buy, info, ex, symbol, stop, clientId) {
     fills: [{ kind: "BUY", price: buy.avg, qty: buy.qty, usdt: buy.quote, fee: buy.feeUsdt, at: new Date(), orderId: buy.orderId }] } });
 }
 
+// futures: long or short, isolated margin at the group's leverage
+async function openFutures(sig, user, g, conn, p, pl, side) {
+  const fut = futuresFor(conn);
+  if (!fut) return { skip: `futures on ${exName(conn)} are not supported by Copixio yet (Binance, KuCoin, OKX, Bitget and HTX are)` };
+  const symbol = fut.symbolFor(p.base);
+  const info = await fut.info(symbol).catch(() => null);
+  if (!info) return { skip: `${p.base} USDT perpetual is not traded on ${exName(conn)} futures` };
+
+  if ((await Trade.countDocuments({ userId: user._id, status: { $in: LIVE } })) >= PLANS[pl].open) return { skip: `your plan allows ${PLANS[pl].open} open trades at a time` };
+  const openGroup = await Trade.countDocuments({ groupId: g._id, status: { $in: LIVE } });
+  if (openGroup >= g.maxOpen) return { skip: `this group already has ${openGroup} open trades (limit ${g.maxOpen})` };
+  if (await Trade.exists({ userId: user._id, symbol, exchangeId: conn._id, market: "futures", status: { $in: LIVE } })) return { skip: `a ${p.base} futures position is already open on this account` };
+  if (await dailyLossHit(g)) return { skip: `the daily loss limit of ${g.dailyLossUsdt} USDT is reached for this group` };
+
+  const price = await fut.price(symbol);
+  if (!(price > 0)) return { skip: "no market price" };
+  const long = side === "long";
+  if (long && p.entryHigh && g.maxEntryGapPct > 0 && price > p.entryHigh * (1 + g.maxEntryGapPct / 100))
+    return { skip: `price ${pp(price)} already ran ${fx((price / p.entryHigh - 1) * 100)}% above the entry ${p.entryHigh}` };
+  if (!long && p.entryLow && g.maxEntryGapPct > 0 && price < p.entryLow * (1 - g.maxEntryGapPct / 100))
+    return { skip: `price ${pp(price)} already fell ${fx((1 - price / p.entryLow) * 100)}% below the entry ${p.entryLow}` };
+  if (p.stop && (long ? price <= p.stop : price >= p.stop)) return { skip: `price ${pp(price)} is already past the stop ${p.stop}` };
+  const pl2 = long ? plan(p, g, price) : planShort(p, g, price);
+  if (pl2.error) return { skip: pl2.error };
+
+  const lev = Math.max(1, Math.min(Math.round(g.leverage || 5), info.maxLeverage || 125));
+  const stopDist = Math.abs(pl2.stop / price - 1);
+  if (stopDist >= 0.9 / lev) return { skip: `the stop is ${fx(stopDist * 100)}% away, past the liquidation price at ${lev}x. Lower the leverage or use a closer stop` };
+
+  const free = await fut.usdtFree();
+  let margin = g.sizeMode === "percent" ? free * (g.sizePercent / 100) : g.sizeUsdt;
+  margin = Math.floor(margin * 100) / 100;
+  if (margin > free) return { skip: `not enough USDT in the futures wallet: ${fx(free)} free, the rule needs ${fx(margin)}` };
+  const cs = info.contractSize || 1;
+  const contracts = floorTo((margin * lev) / (price * cs), info.step);
+  if (!(contracts > 0) || contracts < (info.minQty || 0) || contracts * cs * price < Math.max(info.minNotional || 5, 5))
+    return { skip: `trade size ${fx(margin)} USDT x ${lev} is below the exchange minimum for ${p.base}` };
+
+  const trade = await Trade.create({ userId: user._id, groupId: g._id, signalId: sig._id, exchangeId: conn._id, exchange: conn.exchange, env: conn.env, symbol, base: p.base,
+    market: "futures", side, leverage: lev, marginUsdt: margin, contractSize: cs, status: "opening", stopPrice: pl2.stop, targets: pl2.targets });
+  const clientId = `cx${trade._id}`;
+  await Trade.updateOne({ _id: trade._id }, { $set: { clientOrderId: clientId } });
+
+  try { await fut.prepare(symbol, lev); }
+  catch (e) {
+    const why = `could not set ${lev}x isolated on ${exName(conn)} futures: ${e.message}`;
+    await Trade.updateOne({ _id: trade._id }, { $set: { status: "failed", error: why } });
+    return { error: why };
+  }
+  let fill = null, refused = null;
+  for (let attempt = 0; attempt < 4 && !fill && !refused; attempt++) {
+    try { fill = attempt === 0 ? await fut.open(symbol, side, contracts, clientId, info, lev) : await fut.findOpen(symbol, clientId, info); }
+    catch (e) { if (!isGateway(e)) refused = e; else await sleep(2500 * (attempt + 1)); }
+  }
+  if (!fill && !refused) fill = await fut.findOpen(symbol, clientId, info).catch(() => null);
+  if (!fill || !(fill.qty > 0)) {
+    const why = refused ? `the exchange refused the order: ${refused.message}` : "the exchange did not answer and no order was found";
+    await Trade.updateOne({ _id: trade._id }, { $set: { status: "failed", error: why } });
+    await notify(user, `❌ ${esc(p.base)} futures: ${esc(why)}. No position was opened.`);
+    return { error: why };
+  }
+  await adoptFutures(trade._id, fill, info);
+  log(`OPEN ${side.toUpperCase()} ${conn.exchange} ${symbol} ${fill.qty} @ ${fill.avg} (${fx(fill.usdt)} USDT, ${lev}x) stop ${pl2.stop}`);
+  await notify(user, `✅ <b>${long ? "Long" : "Short"} ${esc(p.base)}</b> on ${exName(conn)} futures, ${lev}x isolated\nMargin ${fx(margin)} USDT (position ${fx(fill.usdt)}) @ ${pp(fill.avg)}\nStop ${pp(pl2.stop)}\nTargets ${pl2.targets.map((t) => pp(t.price)).join(" · ")}\nGroup: ${esc(g.title)}`);
+  return { tradeId: trade._id };
+}
+
+async function adoptFutures(tradeId, fill, info) {
+  const qty = floorTo(fill.qty, info.step);
+  await Trade.updateOne({ _id: tradeId }, { $set: { status: "open", entryPrice: fill.avg, qty, qtyLeft: qty, costUsdt: fill.usdt, feesUsdt: fill.feeUsdt, openedAt: new Date(), stopOrderId: null,
+    fills: [{ kind: "OPEN", price: fill.avg, qty: fill.qty, usdt: fill.usdt, fee: fill.feeUsdt, at: new Date(), orderId: fill.orderId }] } });
+}
+
 // ------------------------------------------------------------------ managing open trades
 const busy = new Set();
 const connCache = new Map();
 async function adapterOf(t) {
-  const c = connCache.get(String(t.exchangeId));
+  const key = `${t.market === "futures" ? "f" : "s"}:${t.exchangeId}`;
+  const c = connCache.get(key);
   if (c && Date.now() - c.at < 60000) return c.ex;
   const conn = await Exchange.findById(t.exchangeId).lean();
   if (!conn) return null;
-  const ex = adapterFor(conn);
-  connCache.set(String(t.exchangeId), { at: Date.now(), ex });
+  const ex = t.market === "futures" ? futuresFor(conn) : adapterFor(conn);
+  connCache.set(key, { at: Date.now(), ex });
   return ex;
 }
 
@@ -213,6 +328,7 @@ async function manage(id) {
   const t = await Trade.findOne({ _id: id, status: "open" }).lean(); // fresh read under the busy lock
   if (!t) return;
   t.fills ||= []; t.targets ||= [];
+  if (t.market === "futures") return manageFutures(t);
   const ex = await adapterOf(t);
   if (!ex) return;
   const user = await User.findById(t.userId, { notifyChatId: 1 }).lean();
@@ -252,6 +368,93 @@ async function manage(id) {
   await notify(user, `🎯 <b>${esc(t.base)} target hit</b> at ${pp(px)}. ${t.qtyLeft} left, stop now ${pp(t.stopPrice)}.`);
 }
 
+// ---- futures positions (long or short)
+const goneSeen = new Map(); // trade id -> empty position readings in a row
+// close `qty` contracts reduce-only; true when closed, false when nothing is left to close
+async function closePart(t, fut, info, qty, kind) {
+  const clientId = `cx${t._id}x${t.fills.length}`;
+  const held = await fut.held(t.symbol, t.side).catch(() => null);
+  const q = floorTo(Math.min(qty, held > 0 ? held : qty), info.step); // a 0 reading is not trusted here (manageFutures decides "gone")
+  if (!(q > 0)) return false;
+  let s = null;
+  try { s = await fut.close(t.symbol, t.side, q, clientId, info); }
+  catch (e) {
+    s = await fut.findClose(t.symbol, clientId, info).catch(() => null);
+    if (!s) { await save(t, { error: `close failed: ${e.message}` }); throw e; }
+  }
+  record(t, kind, s);
+  await save(t);
+  return true;
+}
+
+async function finishFutures(t, outcome, user) {
+  const closes = t.fills.filter((f) => f.kind !== "OPEN");
+  if (!closes.length) {
+    await Trade.updateOne({ _id: t._id }, { $set: { status: "failed", error: "the position is no longer open on the exchange (closed outside Copixio, or liquidated)", closedAt: new Date() } });
+    await notify(user, `⚠️ ${esc(t.base)} futures: the position is no longer open on your account (closed outside Copixio, or liquidated). Copixio stopped managing it.`);
+    return;
+  }
+  const usdt = closes.reduce((a, f) => a + f.usdt, 0), q = closes.reduce((a, f) => a + f.qty, 0);
+  const cs = t.contractSize || 1;
+  const exitPrice = q ? usdt / (q * cs) : null;
+  const entryNotional = (t.costUsdt || 0) * (q / (t.qty || q)); // the part of the position that was closed
+  const pnl = (t.side === "short" ? entryNotional - usdt : usdt - entryNotional) - (t.feesUsdt || 0);
+  await Trade.updateOne({ _id: t._id }, { $set: { status: "closed", outcome, exitPrice, pnlUsdt: pnl, closedAt: new Date(), fills: t.fills, qtyLeft: 0, feesUsdt: t.feesUsdt, closeRequested: false, targets: t.targets } });
+  log(`CLOSED ${t.side} ${t.symbol} ${outcome} pnl ${fx(pnl)}`);
+  await notify(user, `${pnl >= 0 ? "🟢" : "🔴"} <b>${esc(t.base)} ${t.side} closed: ${outcome}</b> (futures ${t.leverage}x)\nResult ${pnl >= 0 ? "+" : ""}${fx(pnl)} USDT on ${fx(t.marginUsdt)} margin (exit ${exitPrice ? pp(exitPrice) : "?"})`);
+}
+
+async function exitFutures(t, fut, info, kind, end, user) {
+  const r = await closePart(t, fut, info, t.qtyLeft, kind);
+  if (r === false && !t.fills.some((f) => f.kind !== "OPEN")) return finishFutures(t, end, user); // nothing was ever closed: gone
+  return finishFutures(t, label(t, end), user);
+}
+
+async function manageFutures(t) {
+  const fut = await adapterOf(t);
+  if (!fut) return;
+  const user = await User.findById(t.userId, { notifyChatId: 1 }).lean();
+  const info = await fut.info(t.symbol);
+  const px = await fut.price(t.symbol);
+  if (!(px > 0) || !info) return;
+  const long = t.side !== "short";
+  const cs = t.contractSize || info.contractSize || 1;
+
+  // the position vanished (liquidated / closed by hand on the exchange)
+  // (two empty readings in a row, never in the first 30 s: an exchange can report a fresh position late)
+  const held = await fut.held(t.symbol, t.side).catch(() => null);
+  const id = String(t._id);
+  if (held === 0 && Date.now() - new Date(t.openedAt).getTime() > 30000) {
+    goneSeen.set(id, (goneSeen.get(id) || 0) + 1);
+    if (goneSeen.get(id) >= 2) {
+      goneSeen.delete(id);
+      if (t.fills.some((f) => f.kind !== "OPEN")) return finishFutures(t, label(t, "CLOSED OUTSIDE"), user);
+      return finishFutures(t, "GONE", user);
+    }
+    return;
+  }
+  goneSeen.delete(id);
+  if (t.closeRequested) return exitFutures(t, fut, info, "MANUAL", "MANUAL", user);
+  if (long ? px <= t.stopPrice : px >= t.stopPrice) return exitFutures(t, fut, info, "STOP", "SL", user);
+  const next = t.targets.find((x) => !x.done);
+  if (!next || (long ? px < next.price : px > next.price)) return;
+  const remaining = t.targets.filter((x) => !x.done).length;
+  let qty = remaining === 1 ? t.qtyLeft : floorTo(t.qty * (next.share / 100), info.step);
+  const small = (x) => x * cs * px < (info.minNotional || 5) || x < (info.minQty || 0);
+  if (remaining > 1 && (small(qty) || small(t.qtyLeft - qty))) qty = t.qtyLeft;
+  const r = await closePart(t, fut, info, qty, "TP");
+  if (r === false) return finishFutures(t, "TP", user);
+  next.done = true;
+  if (qty >= t.qtyLeft || !(t.qtyLeft > 0) || small(t.qtyLeft)) { t.targets.forEach((x) => { x.done = true; }); await save(t); return finishFutures(t, "TP", user); }
+  const g = await Group.findById(t.groupId, { moveSlToEntry: 1 }).lean();
+  if (g?.moveSlToEntry) {
+    if (long && t.stopPrice < t.entryPrice) t.stopPrice = t.entryPrice * 1.002;
+    if (!long && t.stopPrice > t.entryPrice) t.stopPrice = t.entryPrice * 0.998;
+  }
+  await save(t);
+  await notify(user, `🎯 <b>${esc(t.base)} ${t.side} target hit</b> at ${pp(px)}. ${t.qtyLeft} contracts left, stop now ${pp(t.stopPrice)}.`);
+}
+
 async function monitor() {
   const ids = (await Trade.find({ status: "open" }, { _id: 1 }).lean()).map((x) => String(x._id));
   await Promise.all(ids.map(async (id) => {
@@ -265,11 +468,17 @@ async function monitor() {
 
 // ------------------------------------------------------------------ start-up recovery and main loop
 async function recover() {
-  // trades left "opening" by a crash: adopt the buy if it landed, otherwise mark it failed
+  // trades left "opening" by a crash: adopt the order if it landed, otherwise mark it failed
   for (const t of await Trade.find({ status: "opening" }).lean()) {
     try {
       const ex = await adapterOf(t);
       const info = ex && (await ex.info(t.symbol));
+      if (t.market === "futures") {
+        const fill = ex && info && t.clientOrderId ? await ex.findOpen(t.symbol, t.clientOrderId, info) : null;
+        if (fill && fill.qty > 0) { await adoptFutures(t._id, fill, info); log(`adopted futures ${t.symbol} ${t._id} after a restart`); }
+        else await Trade.updateOne({ _id: t._id }, { $set: { status: "failed", error: "interrupted before the order was placed" } });
+        continue;
+      }
       const buy = ex && t.clientOrderId ? await ex.findBuy(t.symbol, t.base, t.clientOrderId) : null;
       if (buy && info) { await adopt(t._id, buy, info, ex, t.symbol, t.stopPrice, t.clientOrderId); log(`adopted ${t.symbol} ${t._id} after a restart`); }
       else await Trade.updateOne({ _id: t._id }, { $set: { status: "failed", error: "interrupted before the buy was placed" } });

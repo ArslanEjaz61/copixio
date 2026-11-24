@@ -199,61 +199,18 @@ function QrLogin({ onDone, onCancel }) {
   );
 }
 
-// ---------------------------------------------------------------- the Telegram tile: sign-in stepper
-const STEPS = [["phone", "Phone"], ["code", "Code"], ["password", "Password"]];
-// 23 Nov: say where the code really went (it is usually NOT an SMS)
-function codeWhere(s) {
-  const v = s?.via;
-  if (v === "app") return "Telegram sent the code inside the Telegram app, not by SMS: open Telegram on a phone or computer where you are already logged in, chat “Telegram” (blue tick).";
-  if (v === "sms") return "Telegram sent the code by SMS to this number.";
-  if (v === "call") return "Telegram is calling this number; the code is in the call (or the last digits of the calling number).";
-  if (v === "email") return `Telegram sent the code to your login email${s.email ? ` (${s.email})` : ""}.`;
-  if (v === "fragment") return "Telegram sent the code to your Fragment number (fragment.com).";
-  return "Open Telegram: the code is in the chat from “Telegram”.";
-}
+// ---------------------------------------------------------------- the Telegram tile: sign-in by QR code
+// 24 Nov: QR only. Telegram silently holds back the login codes it says it sent "in the app" for apps like Copixio
+// (the same code from my.telegram.org arrives at once), so the phone-number sign-in was removed from the page.
 function TelegramTile({ tg, setTg, groupsHref, hasExchange, configured }) {
   const [open, setOpen] = useState(false);
-  const [step, setStep] = useState("phone");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
-  const [sent, setSent] = useState(null); // where Telegram sent the code
-  const [wait, setWait] = useState(0); // seconds until "Send again" is allowed
-  const [resent, setResent] = useState(null);
-  useEffect(() => {
-    if (wait <= 0) return undefined;
-    const t = setTimeout(() => setWait((w) => w - 1), 1000);
-    return () => clearTimeout(t);
-  }, [wait]);
   const connected = tg.status === "connected";
 
-  async function submit(e) {
-    e.preventDefault();
-    const f = new FormData(e.currentTarget);
-    setBusy(true); setErr(null);
-    const body = step === "phone" ? { step, phone: String(f.get("phone") || "").replace(/[\s-]/g, "") } : step === "code" ? { step, code: f.get("code") } : { step, password: f.get("password") };
-    const j = await api("/api/telegram", "POST", body);
-    setBusy(false);
-    if (!j.ok) return setErr(j.error);
-    if (j.via !== undefined) { setSent({ via: j.via, nextVia: j.nextVia, email: j.email }); setWait(30); setResent(null); }
-    if (j.next === "done") { setTg(j.telegram); setOpen(false); setStep("phone"); } else setStep(j.next);
-  }
-  // 23 Nov: "Didn't get the code? Send again" -- the other way when Telegram offers one (SMS), else a fresh code
-  async function resend() {
-    setBusy(true); setErr(null);
-    const j = await api("/api/telegram", "POST", { step: "resend" });
-    setBusy(false);
-    if (!j.ok) { setWait(30); return setErr(j.error); }
-    setSent({ via: j.via, nextVia: j.nextVia, email: j.email });
-    setResent(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
-    setWait(30);
-  }
   async function logout() {
     if (!window.confirm("Disconnect Telegram? Your groups stop trading until you connect again.")) return;
     const j = await api("/api/telegram", "POST", { step: "logout" });
     if (j.ok) setTg({ status: "none" });
   }
-  const shownSteps = step === "password" ? STEPS : STEPS.slice(0, 2);
-  const [mode, setMode] = useState("qr");
 
   return (
     <article className="tile tile-wide">
@@ -285,54 +242,7 @@ function TelegramTile({ tg, setTg, groupsHref, hasExchange, configured }) {
           {!configured && <span className="hint">Telegram sign-in opens as soon as it is switched on for Copixio.</span>}
         </div>
       ) : (
-        <>
-        <div className="tile-mode">
-          <div className="seg" role="tablist" aria-label="How to sign in">
-            <button type="button" role="tab" aria-selected={mode === "qr"} className={mode === "qr" ? "on" : ""} onClick={() => setMode("qr")}>Scan QR code</button>
-            <button type="button" role="tab" aria-selected={mode === "phone"} className={mode === "phone" ? "on" : ""} onClick={() => setMode("phone")}>Phone number</button>
-          </div>
-        </div>
-        {mode === "qr" ? <QrLogin onDone={(t) => { setTg(t); setOpen(false); }} onCancel={() => setOpen(false)} /> : (
-        <div className="tile-form">
-          <form className="form-col" onSubmit={submit}>
-            <ol className="stepper" aria-label="Sign-in steps">
-              {shownSteps.map(([k, l], i) => {
-                const idx = STEPS.findIndex((s) => s[0] === step);
-                return <li key={k} className={i < idx ? "done" : i === idx ? "now" : ""}><span>{i < idx ? "✓" : i + 1}</span>{l}</li>;
-              })}
-            </ol>
-            {step === "phone" && (<div className="field"><label htmlFor="phone">Phone number on Telegram</label>
-              <input className="input" id="phone" name="phone" type="tel" inputMode="tel" placeholder="+92 300 1234567" autoComplete="tel" required autoFocus />
-              <span className="hint">With country code. Telegram sends a login code to your app.</span></div>)}
-            {step === "code" && (<div className="field"><label htmlFor="code">Login code</label>
-              <input className="input num code-input" id="code" name="code" inputMode="numeric" autoComplete="one-time-code" placeholder="• • • • •" required autoFocus />
-              <span className="hint" role="status">{codeWhere(sent)}</span>
-              <span className="hint">
-                {wait > 0 ? <>Didn&apos;t get the code? You can ask again in {wait} s.</> : (
-                  <button className="btn-text" type="button" disabled={busy} onClick={resend}>
-                    {sent?.nextVia === "sms" ? "Didn't get the code? Send it by SMS" : sent?.nextVia === "call" ? "Didn't get the code? Get a phone call" : "Didn't get the code? Send again"}
-                  </button>
-                )}
-                {" · "}<button className="btn-text" type="button" onClick={() => { setMode("qr"); setErr(null); }}>Use Scan QR code instead</button>
-              </span>
-              {resent && <span className="hint" role="status">A new code was sent at {resent}.</span>}</div>)}
-            {step === "password" && (<div className="field"><label htmlFor="password">Two-step verification password</label>
-              <input className="input" id="password" name="password" type="password" autoComplete="current-password" required autoFocus />
-              <span className="hint">The password you set in Telegram → Privacy → Two-Step Verification.</span></div>)}
-            {err && <div className="note bad" role="alert">{err}</div>}
-            <div className="actions">
-              <button className="btn btn-ink" type="submit" disabled={busy}>{busy ? "Please wait…" : step === "phone" ? "Send code" : step === "code" ? "Verify code" : "Sign in"}</button>
-              <button className="btn-text" type="button" onClick={() => { setOpen(false); setStep("phone"); setErr(null); }}>Cancel</button>
-            </div>
-          </form>
-          <aside className="guide">
-            <b>Why Copixio signs in to Telegram</b>
-            <p className="hint">Signal groups are private: only a member can read them. Signing in lets Copixio read new messages in the groups you choose, the same way your Telegram app does.</p>
-            <p className="hint">Your login is encrypted with AES-256 and never shown to anyone.</p>
-          </aside>
-        </div>
-        )}
-        </>
+        <QrLogin onDone={(t) => { setTg(t); setOpen(false); }} onCancel={() => setOpen(false)} />
       )}
     </article>
   );

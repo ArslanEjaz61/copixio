@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { Exchange, Telegram } from "@/lib/models";
+import { Exchange, Group, Telegram } from "@/lib/models";
 import { clientMeta } from "@/lib/auth";
 import { limit } from "@/lib/rate";
 import { apiUser, bad, ok } from "@/lib/session-user";
@@ -19,7 +19,10 @@ const saver = (userId) => async (r) => {
   await Telegram.findOneAndUpdate({ userId },
     { $set: { sessionSealed: r.sessionSealed, tgUserId: r.tgUserId, tgName: r.tgName, status: "connected", connectedAt: new Date(), lastError: null, pendingSessionSealed: null, phoneCodeHash: null } },
     { upsert: true });
+  // 24 Nov: groups added with another Telegram account are switched off (and hidden on the groups page)
+  await Group.updateMany({ userId, tgUserId: { $ne: String(r.tgUserId) }, enabled: true }, { $set: { enabled: false } });
   await announce("telegram", userId).catch(() => {}); // the listener also re-reads every few minutes
+  await announce("groups", userId).catch(() => {});
 };
 
 // Poll: the QR picture while waiting, "password" when two-step verification is on, "done" once connected.

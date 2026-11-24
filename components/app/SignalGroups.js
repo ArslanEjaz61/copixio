@@ -179,10 +179,11 @@ function Picker({ onAdd, onClose }) {
   );
 }
 
-export default function SignalGroups({ initialGroups, exchanges, connected }) {
+export default function SignalGroups({ initialGroups, exchanges, connected, openPicker = false }) {
   const [groups, setGroups] = useState(initialGroups);
   const [sel, setSel] = useState(initialGroups[0]?.id || null);
-  const [picking, setPicking] = useState(initialGroups.length === 0 && connected);
+  // 24 Nov: "Choose signal groups" opens the list of the user's Telegram chats first
+  const [picking, setPicking] = useState(connected && (openPicker || initialGroups.length === 0));
   const on = groups.filter((g) => g.enabled).length;
 
   if (!connected) return (

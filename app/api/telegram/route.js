@@ -96,7 +96,9 @@ export async function POST(req) {
       Object.assign(t, { sessionSealed: r.sessionSealed, tgUserId: r.tgUserId, tgName: r.tgName, status: "connected", connectedAt: new Date(), lastError: null, pendingSessionSealed: null, phoneCodeHash: null });
       await t.save();
       tgLog(user._id, `connected by phone (${b.step})`);
+      await Group.updateMany({ userId: user._id, tgUserId: { $ne: String(r.tgUserId) }, enabled: true }, { $set: { enabled: false } }); // 24 Nov
       await announce("telegram", user._id);
+      await announce("groups", user._id);
       return ok({ next: "done", telegram: view(t.toObject()) });
     }
 

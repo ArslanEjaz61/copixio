@@ -8,7 +8,8 @@ export async function GET(req) {
   const [user, deny] = await apiUser(req);
   if (deny) return deny;
   await db();
-  const list = await Group.find({ userId: user._id }).sort({ createdAt: 1 }).lean();
+  const t = await Telegram.findOne({ userId: user._id, status: "connected" }, { tgUserId: 1 }).lean();
+  const list = t ? await Group.find({ userId: user._id, tgUserId: String(t.tgUserId) }).sort({ createdAt: 1 }).lean() : [];
   return ok({ groups: list.map(groupView) });
 }
 
@@ -21,11 +22,13 @@ export async function POST(req) {
   let b;
   try { b = Body.parse(await req.json()); } catch { return bad("That group could not be added."); }
   await db();
-  if (!(await Telegram.exists({ userId: user._id, status: "connected" }))) return bad("Connect Telegram first.", 409);
+  const t = await Telegram.findOne({ userId: user._id, status: "connected" }, { tgUserId: 1 }).lean();
+  if (!t) return bad("Connect Telegram first.", 409);
   if ((await Group.countDocuments({ userId: user._id })) >= 200) return bad("You can follow at most 200 groups.", 403);
+  // 24 Nov: a group belongs to the Telegram account it was added with (re-adding it binds it to the current one)
   const g = await Group.findOneAndUpdate(
     { userId: user._id, chatId: b.chatId },
-    { $setOnInsert: { userId: user._id, chatId: b.chatId, enabled: false }, $set: { title: b.title, kind: b.kind } },
+    { $setOnInsert: { userId: user._id, chatId: b.chatId, enabled: false }, $set: { title: b.title, kind: b.kind, tgUserId: String(t.tgUserId) } },
     { upsert: true, new: true }
   ).lean();
   return ok({ group: groupView(g) });

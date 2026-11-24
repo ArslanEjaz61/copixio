@@ -284,7 +284,7 @@ export default function ConnectionsClient({ initialExchanges, initialTelegram, s
         </div>
       </section>
       <h2 className="sec-title">Signals</h2>
-      <TelegramTile tg={tg} setTg={setTg} groupsHref="/app/groups" hasExchange={list.some((x) => x.status === "ok")} configured={configured} />
+      <TelegramTile tg={tg} setTg={setTg} groupsHref="/app/groups?add=1" hasExchange={list.some((x) => x.status === "ok")} configured={configured} />
     </>
   );
 }

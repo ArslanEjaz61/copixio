@@ -192,6 +192,9 @@ async function openFutures(sig, user, g, conn, p, pl, side) {
 
   const price = await fut.price(symbol);
   if (!(price > 0)) return { skip: "no market price" };
+  // the same ticker can be a different coin on another exchange (OKX "ON" = 61.7 while ON is 0.117 elsewhere)
+  const ref = p.entryLow || p.entryHigh || p.stop || p.targets?.[0];
+  if (ref > 0 && (price > ref * 1.5 || price < ref * 0.5)) return { skip: `${p.base} futures on ${exName(conn)} trade at ${pp(price)}, far from the signal's ${pp(ref)}: probably a different coin with the same ticker` };
   const long = side === "long";
   if (long && p.entryHigh && g.maxEntryGapPct > 0 && price > p.entryHigh * (1 + g.maxEntryGapPct / 100))
     return { skip: `price ${pp(price)} already ran ${fx((price / p.entryHigh - 1) * 100)}% above the entry ${p.entryHigh}` };

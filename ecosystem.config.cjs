@@ -7,5 +7,7 @@ module.exports = {
     { ...base, name: "copixio-listener", script: "workers/listener.mjs", max_memory_restart: "900M", kill_timeout: 8000 },
     // places orders and manages open trades (stop, targets, manual close)
     { ...base, name: "copixio-trader", script: "workers/trader.mjs", max_memory_restart: "700M", kill_timeout: 15000 },
+    // 25 Nov: Watchout coins for the Smartbot dashboard (open interest +50% in 24 h); here so it never uses Smartbot's Binance limit
+    { ...base, name: "copixio-watchout", script: "workers/watchout.mjs", max_memory_restart: "400M", kill_timeout: 5000 },
   ],
 };

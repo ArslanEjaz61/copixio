@@ -81,11 +81,15 @@ async function pass() {
     const px = new Map((tick || []).map((t) => [t.symbol, { price: Number(t.lastPrice), chg: Number(t.priceChangePercent), volUsd: Number(t.quoteVolume) }]));
     const rows = [];
     let read = 0;
-    const gap = Math.max(150, Math.floor((STEP * 0.8) / Math.max(1, list.length))); // spread over 4 of the 5 minutes
-    for (const s of list) {
+    // spread evenly so the pass ends about 3.5 minutes after it starts (~2.5 requests a second, well under Binance's
+    // 1000 per 5 minutes for this endpoint)
+    const deadline = t0 + 210e3;
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i], st = Date.now();
       const r = await binanceOne(s.symbol).catch(() => null);
       if (r) { read++; rows.push({ symbol: s.symbol, base: s.base, exchange: "Binance", ...r, ...(px.get(s.symbol) || {}) }); }
-      await sleep(gap);
+      const left = list.length - i - 1;
+      if (left) await sleep(Math.max(120, (deadline - Date.now()) / left - (Date.now() - st)));
     }
     // KuCoin-only coins
     const kcNow = await kucoinSample(boundary).catch(() => null);

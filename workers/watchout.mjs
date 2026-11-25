@@ -70,6 +70,17 @@ async function kucoinSample(boundary) {
   return snap;
 }
 
+// the chart the dashboard opens: Binance spot when it exists, else KuCoin spot (KC_XXXUSDT), else none
+let spot = { bn: new Set(), kc: new Set(), at: 0 };
+async function chartOf(base) {
+  if (Date.now() - spot.at > 36e5) {
+    const [b, k] = await Promise.all([getJ("https://api.binance.com/api/v3/exchangeInfo?permissions=SPOT", 20000), getJ("https://api.kucoin.com/api/v2/symbols", 20000)]);
+    if (b?.symbols && k?.data) spot = { at: Date.now(), bn: new Set(b.symbols.filter((s) => s.status === "TRADING" && s.quoteAsset === "USDT").map((s) => s.baseAsset)), kc: new Set(k.data.filter((s) => s.enableTrading && s.quoteCurrency === "USDT").map((s) => s.baseCurrency)) };
+  }
+  const c = spot.bn.has(base) ? base : base.replace(/^1000+/, "");
+  return spot.bn.has(c) ? `${c}USDT` : spot.kc.has(c) ? `KC_${c}USDT` : null;
+}
+
 // ------------------------------------------------------------------ one pass
 let running = false;
 async function pass() {
@@ -95,17 +106,19 @@ async function pass() {
     const kcNow = await kucoinSample(boundary).catch(() => null);
     let kcRead = 0, kcWarm = false;
     if (kcNow) {
-      const old = await redis().hgetall(`wo:kc:${boundary - 864e5}`);
+      let old = {};
+      for (const d of [0, -STEP, STEP, -2 * STEP, 2 * STEP]) { old = await redis().hgetall(`wo:kc:${boundary - 864e5 + d}`); if (Object.keys(old || {}).length) break; }
       kcWarm = Object.keys(old || {}).length > 0;
       const onBinance = new Set(list.map((s) => s.base.replace(/^1000+/, "")));
       for (const [base, v] of Object.entries(kcNow)) {
-        if (onBinance.has(base) || !old?.[base]) continue;
+        if (onBinance.has(base.replace(/^1000+/, "")) || !old?.[base]) continue;
         const [usd, coins, price, sym] = JSON.parse(v), [usd0, coins0] = JSON.parse(old[base]);
         kcRead++;
         rows.push({ symbol: `${base}USDT`, base, exchange: "KuCoin", kcContract: sym, at: boundary, oiUsd: usd, oi: coins, chg24Usd: pct(usd, usd0), chg24Coins: pct(coins, coins0), chgDayUsd: null, price });
       }
     }
     const hits = rows.filter((r) => r.chg24Usd !== null && r.chg24Usd >= MIN_PCT).sort((a, b) => b.chg24Usd - a.chg24Usd);
+    for (const h of hits) h.chart = await chartOf(h.base).catch(() => null);
     const out = { at: Date.now(), windowEnd: Math.max(0, ...rows.filter((r) => r.exchange === "Binance").map((r) => r.at)), minPct: MIN_PCT, basis: "USD value, rolling 24 h",
       binanceCoins: list.length, binanceRead: read, kucoinRead: kcRead, kucoinWarm: kcWarm, coins: hits };
     await redis().set("wo:list", JSON.stringify(out));
@@ -120,7 +133,7 @@ async function main() {
   log(`copixio-watchout up: OI +${MIN_PCT}% in 24 h (USD value)`);
   pass();
   for (;;) {
-    const next = Math.floor(Date.now() / STEP) * STEP + STEP + 100e3;
+    const next = (Math.floor((Date.now() - 100e3) / STEP) + 1) * STEP + 100e3;
     await sleep(next - Date.now());
     await pass();
   }

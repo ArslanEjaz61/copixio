@@ -23,6 +23,24 @@ async function loadGroups(userId) {
   return new Map(gs.map((g) => [g.chatId, g._id]));
 }
 
+// 25 Nov: chart pictures. The full-size photo is downloaded through the user's own Telegram session (sharper than
+// Telegram's web preview) and read by workers/chart/signal.mjs. One picture at a time (OCR is CPU work), 90 s cap each.
+let chartLane = Promise.resolve();
+let chartMod = null;
+function readPicture(client, msg, caption) {
+  const job = chartLane.then(async () => {
+    const buf = await Promise.race([client.downloadMedia(msg, {}), new Promise((_, j) => setTimeout(() => j(new Error("download took over 30 s")), 30000))]);
+    if (!buf || !buf.length) return { ok: false, reason: "picture could not be downloaded" };
+    chartMod ||= await import("./chart/signal.mjs");
+    let t;
+    try {
+      return await Promise.race([chartMod.chartSignal(Buffer.from(buf), caption || "", (msg.date || 0) * 1000 || Date.now()), new Promise((_, j) => { t = setTimeout(() => j(new Error("chart reading took over 90 s")), 90000); })]);
+    } finally { clearTimeout(t); }
+  });
+  chartLane = job.catch(() => {});
+  return job;
+}
+
 async function onMessage(userId, ev) {
   const entry = clients.get(userId);
   const msg = ev.message;
@@ -31,14 +49,21 @@ async function onMessage(userId, ev) {
   const groupId = entry.groups.get(chatId);
   if (!groupId) return;
   const text = msg.message || "";
-  if (!text.trim()) return;
-  const parsed = parseSignal(text);
+  const photo = !!msg.photo || msg.media?.className === "MessageMediaPhoto";
+  if (!text.trim() && !photo) return;
+  let parsed = text.trim() ? parseSignal(text) : { ok: false, reason: "no text" };
+  // 25 Nov: a chart picture is read when its text is not a signal by itself (CHART_SIGNALS=off: text only)
+  if (!parsed.ok && photo && process.env.CHART_SIGNALS !== "off") {
+    const c = await readPicture(entry.client, msg, text).catch((e) => ({ ok: false, reason: `picture: ${e.message}` }));
+    parsed = c.ok ? c : { ...parsed, ok: false, reason: text.trim() ? `${parsed.reason}; ${c.reason}` : c.reason };
+  }
   try {
     const s = await Signal.create({
-      userId, groupId, chatId, messageId: String(msg.id), text: text.slice(0, 4000), parsed,
-      outcome: parsed.ok ? "queued" : "not_a_signal", reason: parsed.ok ? null : parsed.reason,
+      userId, groupId, chatId, messageId: String(msg.id), text: (text || (photo ? "(picture)" : "")).slice(0, 4000), parsed,
+      outcome: parsed.ok ? "queued" : "not_a_signal", reason: parsed.ok ? null : String(parsed.reason || "").slice(0, 500),
     });
-    if (parsed.ok) { await redis().lpush(QUEUE, String(s._id)); log(`signal ${userId} ${chatId} ${parsed.base} ${parsed.side}`); }
+    if (parsed.ok) { await redis().lpush(QUEUE, String(s._id)); log(`signal ${userId} ${chatId} ${parsed.base} ${parsed.side}${parsed.chart ? ` (picture: ${parsed.chart})` : ""}`); }
+    else if (photo) log(`picture ${userId} ${chatId} not a signal: ${String(parsed.reason).slice(0, 200)}`);
   } catch (e) {
     if (e?.code !== 11000) log(`store ${userId}: ${e.message}`); // 11000 = already stored (duplicate update)
   }

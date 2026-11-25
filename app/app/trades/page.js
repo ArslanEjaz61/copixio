@@ -45,9 +45,9 @@ export default async function TradesPage({ searchParams }) {
               <thead><tr><th>Coin</th><th>Group</th><th className="r">Size</th><th className="r">Entry</th><th className="r">Stop</th><th>Targets</th><th>Opened</th><th></th></tr></thead>
               <tbody>{open.map((t) => (
                 <tr key={String(t._id)}>
-                  <td><b>{t.base}</b><div className="hint">{exchangeName(t.exchange, t.env)}{t.market === "futures" ? ` · Futures ${t.side} ${t.leverage}x` : ""}</div></td>
+                  <td><b>{t.base}</b><div className="hint">{exchangeName(t.exchange, t.env)}{t.market === "futures" ? ` · Futures ${t.side} ${t.leverage}x` : t.market === "cfd" ? ` · ${t.side}` : ""}</div></td>
                   <td>{groups.get(String(t.groupId)) || "–"}</td>
-                  <td className="r num">{n(t.costUsdt)}</td>
+                  <td className="r num">{t.market === "cfd" ? `${n(t.qty)} lots` : n(t.costUsdt)}</td>
                   <td className="r num">{p(t.entryPrice)}</td>
                   <td className="r num neg">{p(t.stopPrice)}</td>
                   <td className="num">{(t.targets || []).map((x, i) => <span key={i} style={{ marginRight: 8, textDecoration: x.done ? "line-through" : "none", color: x.done ? "var(--profit)" : undefined }}>{p(x.price)}</span>)}</td>
@@ -73,9 +73,9 @@ export default async function TradesPage({ searchParams }) {
                 <thead><tr><th>Coin</th><th>Group</th><th className="r">Size</th><th className="r">Entry</th><th className="r">Exit</th><th className="r">Result</th><th>Outcome</th><th>Closed</th></tr></thead>
                 <tbody>{closed.map((t) => (
                   <tr key={String(t._id)}>
-                    <td><b>{t.base}</b><div className="hint">{exchangeName(t.exchange, t.env)}{t.market === "futures" ? ` · Futures ${t.side} ${t.leverage}x` : ""}</div></td>
+                    <td><b>{t.base}</b><div className="hint">{exchangeName(t.exchange, t.env)}{t.market === "futures" ? ` · Futures ${t.side} ${t.leverage}x` : t.market === "cfd" ? ` · ${t.side}` : ""}</div></td>
                     <td>{groups.get(String(t.groupId)) || "–"}</td>
-                    <td className="r num">{n(t.costUsdt)}</td>
+                    <td className="r num">{t.market === "cfd" ? `${n(t.qty)} lots` : n(t.costUsdt)}</td>
                     <td className="r num">{p(t.entryPrice)}</td>
                     <td className="r num">{p(t.exitPrice)}</td>
                     <td className={`r num ${t.pnlUsdt >= 0 ? "pos" : "neg"}`}>{t.status === "failed" ? "–" : `${t.pnlUsdt >= 0 ? "+" : ""}${n(t.pnlUsdt)}`}</td>

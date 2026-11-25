@@ -248,6 +248,116 @@ function TelegramTile({ tg, setTg, groupsHref, hasExchange, configured }) {
   );
 }
 
+// ---------------------------------------------------------------- MetaTrader 5: a token for the free Copixio EA
+function Mt5Tile({ accounts, onAdd, onUpdate, onRemove, startOpen = false }) {
+  const meta = exchangeMeta("mt5");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [token, setToken] = useState(null); // { id, value }: shown once, never stored in the browser
+  const [copied, setCopied] = useState(false);
+  const [show, setShow] = useState(startOpen);
+  const [rowBusy, setRowBusy] = useState(null);
+
+  // the EA reports every second; the tile shows whether it is online
+  useEffect(() => {
+    if (!accounts.length) return undefined;
+    const t = setInterval(async () => {
+      const j = await api("/api/exchanges");
+      if (j.ok) (j.exchanges || []).filter((x) => x.exchange === "mt5").forEach(onUpdate);
+    }, 5000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accounts.length]);
+
+  async function create() {
+    setBusy(true); setErr(null);
+    const j = await api("/api/mt5", "POST", {});
+    setBusy(false);
+    if (!j.ok) return setErr(j.error);
+    onAdd(j.exchange); setToken({ id: j.exchange.id, value: j.token }); setShow(false);
+  }
+  async function renew(id) {
+    if (!window.confirm("Make a new token? The old one stops working at once; paste the new one into the EA.")) return;
+    setRowBusy(id); setErr(null);
+    const j = await api(`/api/mt5/${id}`, "POST");
+    setRowBusy(null);
+    if (j.ok) { onUpdate(j.exchange); setToken({ id, value: j.token }); } else setErr(j.error);
+  }
+  async function remove(id) {
+    if (!window.confirm("Remove this MetaTrader 5 connection? Groups that trade on it are switched off.")) return;
+    setRowBusy(id); setErr(null);
+    const j = await api(`/api/exchanges/${id}`, "DELETE");
+    setRowBusy(null);
+    if (j.ok) onRemove(id); else setErr(j.error);
+  }
+  async function copy(v) {
+    try { await navigator.clipboard.writeText(v); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* the token is selectable */ }
+  }
+
+  const online = accounts.some((x) => x.bridge?.online);
+  return (
+    <article className="tile" id="tile-mt5">
+      <header className="tile-h">
+        <span className="tile-mark" style={{ background: meta.color, color: "#fff" }} aria-hidden="true">{meta.mark}</span>
+        <div><h3>MetaTrader 5</h3><p className="hint">Forex, gold, indices, crypto CFDs · free Copixio EA · demo or live</p></div>
+        {online ? <span className="pill ok">EA online</span> : accounts.length ? <span className="pill wait">EA offline</span> : <span className="pill info">Not connected</span>}
+      </header>
+
+      {accounts.length > 0 && (
+        <ul className="acct">
+          {accounts.map((x) => {
+            const b = x.bridge || {};
+            return (
+              <li key={x.id}>
+                <div className="row-main">
+                  <b>{x.label || "MetaTrader 5"} <span className={`pill ${b.online ? "ok" : "wait"}`}>{b.online ? "Online" : "Offline"}</span>{b.login && <> <span className={`pill ${x.env === "demo" ? "info" : "ok"}`}>{x.env === "demo" ? "Demo" : "Live"}</span></>}</b>
+                  <span className="hint">
+                    {b.login ? <>Account <span className="num">{b.login}</span> · {b.server}{b.balance != null && <> · balance <span className="num">{usd(b.balance)}</span> {b.currency}</>}</> : "Waiting for the EA to connect for the first time…"}
+                    {b.lastSeenAt && !b.online ? ` · last seen ${new Date(b.lastSeenAt).toLocaleString()}` : ""}
+                  </span>
+                  {token?.id === x.id && (
+                    <div className="note ok" role="status" style={{ marginTop: 8 }}>
+                      <b>Your private token. It is shown only now:</b>
+                      <div className="num" style={{ wordBreak: "break-all", margin: "6px 0", userSelect: "all" }}>{token.value}</div>
+                      <button className="btn btn-line" type="button" onClick={() => copy(token.value)}>{copied ? "Copied" : "Copy token"}</button>
+                      <span className="hint"> Paste it into the EA&apos;s <b>InpToken</b> input.</span>
+                    </div>
+                  )}
+                </div>
+                <div className="row-side">
+                  <button className="btn-text" type="button" disabled={rowBusy === x.id} onClick={() => renew(x.id)}>New token</button>
+                  <button className="btn-text danger" type="button" disabled={rowBusy === x.id} onClick={() => remove(x.id)}>Remove</button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {err && <div className="note bad" role="alert" style={{ margin: "0 22px 12px" }}>{err}</div>}
+
+      <div className="tile-form">
+        <div className="form-col">
+          <div className="actions">
+            <a className="btn btn-line" href="/mt5/Copixio_Bridge.ex5" download>Download the EA (.ex5)</a>
+            <a className="btn-text" href="/mt5/Copixio_Bridge.mq5" download>source (.mq5)</a>
+          </div>
+          {(show || !accounts.length) ? (
+            <div className="actions"><button className="btn btn-ink" type="button" disabled={busy} onClick={create}>{busy ? "Making the token…" : accounts.length ? "Add another MetaTrader 5 terminal" : "Connect MetaTrader 5"}</button></div>
+          ) : (
+            <div className="actions"><button className="btn-text" type="button" onClick={() => setShow(true)}>Add another MetaTrader 5 terminal</button></div>
+          )}
+          <span className="hint">Free. Your terminal must stay open (a PC or a VPS). Orders and keys never leave your broker: Copixio only sends the order to your own terminal.</span>
+        </div>
+        <aside className="guide">
+          <b>Set up the EA (5 minutes)</b>
+          <ol>{meta.guide.map((s) => <li key={s}>{s}</li>)}</ol>
+          <div className="ipbox"><span className="hint">Allow this address in MetaTrader 5</span><b className="num">https://copixio.com</b></div>
+        </aside>
+      </div>
+    </article>
+  );
+}
+
 export default function ConnectionsClient({ initialExchanges, initialTelegram, serverIp, configured }) {
   const [list, setList] = useState(initialExchanges);
   const [tg, setTg] = useState(initialTelegram);
@@ -263,7 +373,9 @@ export default function ConnectionsClient({ initialExchanges, initialTelegram, s
       <h2 className="sec-title">Exchanges</h2>
       {shown.length > 0 && (
         <div className="tiles">
-          {shown.map((k) => (
+          {shown.map((k) => k === "mt5" ? (
+            <Mt5Tile key={k} accounts={list.filter((x) => x.exchange === "mt5")} onAdd={add} onUpdate={upd} onRemove={rem} startOpen={k === adding && !list.some((x) => x.exchange === "mt5")} />
+          ) : (
             <ExchangeTile key={k} kind={k} accounts={list.filter((x) => x.exchange === k)} onAdd={add} onUpdate={upd} onRemove={rem} serverIp={serverIp}
               startOpen={k === adding && !list.some((x) => x.exchange === k)} onClose={() => setAdding(null)} />
           ))}
@@ -277,7 +389,7 @@ export default function ConnectionsClient({ initialExchanges, initialTelegram, s
             return (
               <button key={x.id} type="button" className={`ex-chip${adding === x.id ? " on" : ""}`} aria-pressed={adding === x.id} onClick={() => setAdding(x.id)}>
                 <span className="tile-mark" style={{ background: x.color, color: x.ink || "#fff" }} aria-hidden="true">{x.mark}</span>
-                <span><b>{x.name}</b><small>{has ? "Connected" : x.demo ? "Live or demo" : "Live"}</small></span>
+                <span><b>{x.name}</b><small>{has ? "Connected" : x.bridge ? "Free EA bridge" : x.demo ? "Live or demo" : "Live"}</small></span>
               </button>
             );
           })}

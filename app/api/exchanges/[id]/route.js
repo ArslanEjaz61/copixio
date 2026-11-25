@@ -21,6 +21,7 @@ export async function POST(req, { params }) {
   const { id } = await params;
   const x = await own(user, id);
   if (!x) return bad("Not found.", 404);
+  if (x.exchange === "mt5") return ok({ exchange: publicView(x.toObject()) }); // the EA reports by itself; nothing to test here
   let res;
   try {
     const key = unseal(x.keySealed), secret = unseal(x.secretSealed);

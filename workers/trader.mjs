@@ -20,6 +20,7 @@ import { checkKeyFor } from "../lib/exchanges/check.js";
 import { exchangeName } from "../lib/exchanges/list.js";
 import { unseal } from "../lib/seal.js";
 import { notify, esc } from "../lib/notify.js";
+import { bridgeOnline, enqueue, sweep as mt5Sweep, tradeComment, waitResult } from "../lib/mt5.js";
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const QUEUE = "cx:signals";
@@ -66,6 +67,50 @@ function split(tps, g) {
   return tps.map((x, i) => ({ price: x, share: shares[i], done: false }));
 }
 
+// ------------------------------------------------------------------ MetaTrader 5 (25 Nov)
+// The order is queued for the user's own terminal (the Copixio EA, lib/mt5.js) and answered within a few seconds. One
+// position per signal, with the stop loss and the first target set ON the broker's side. Forex, gold, indices come as
+// "XAUUSD"; a crypto signal ("BTC") goes to the broker's CFD ("BTCUSD").
+async function openMt5(sig, user, g, conn, p, pl, side) {
+  if (conn.status !== "ok") return skip(sig, "the MetaTrader 5 connection is not working", user);
+  if (!bridgeOnline(conn)) {
+    const seen = conn.bridge?.lastSeenAt ? `${Math.round((Date.now() - new Date(conn.bridge.lastSeenAt).getTime()) / 60e3)} min ago` : "never";
+    return skip(sig, `your MetaTrader 5 terminal is offline (the Copixio EA last reported ${seen}). Open MetaTrader 5 with the EA running and AutoTrading on`, user);
+  }
+  const symbol = p.fx ? p.base : `${p.base}USD`;
+  if ((await Trade.countDocuments({ userId: user._id, status: { $in: LIVE } })) >= PLANS[pl].open) return skip(sig, `your plan allows ${PLANS[pl].open} open trades at a time`, user);
+  const openGroup = await Trade.countDocuments({ groupId: g._id, status: { $in: LIVE } });
+  if (openGroup >= g.maxOpen) return skip(sig, `this group already has ${openGroup} open trades (limit ${g.maxOpen})`, user, false);
+  if (await Trade.exists({ userId: user._id, symbol, exchangeId: conn._id, status: { $in: LIVE } })) return skip(sig, `a ${symbol} trade is already open on this account`, user, false);
+  if (await dailyLossHit(g)) return skip(sig, `the daily loss limit of ${g.dailyLossUsdt} is reached for this group`, user, false);
+
+  const long = side === "long";
+  const entry = p.entryLow && p.entryHigh ? (p.entryLow + p.entryHigh) / 2 : null;
+  const sl = g.slMode === "signal" && p.stop > 0 ? p.stop : null;
+  const tps = (p.targets || []).filter((t) => t > 0 && (entry ? (long ? t > entry : t < entry) : true)).sort((a, b) => (long ? a - b : b - a));
+  const tp = g.tpMode === "signal" && tps.length ? tps[0] : null; // the nearest target
+  if (entry && sl && (long ? !(sl < entry) : !(sl > entry))) return skip(sig, `the stop ${pp(sl)} is on the wrong side of the entry ${pp(entry)} for a ${side}`, user);
+  if (sl && tp && (long ? !(sl < tp) : !(sl > tp))) return skip(sig, `the stop ${pp(sl)} and the target ${pp(tp)} do not fit a ${side}`, user);
+  const size = g.riskUsd > 0 ? { risk: g.riskUsd } : { lots: g.lots || 0.01 };
+
+  const trade = await Trade.create({ userId: user._id, groupId: g._id, signalId: sig._id, exchangeId: conn._id, exchange: "mt5", env: conn.env, symbol, base: p.base, market: "cfd", side, status: "opening",
+    stopPrice: sl, targets: tp ? [{ price: tp, share: 100, done: false }] : [] });
+  await Trade.updateOne({ _id: trade._id }, { $set: { clientOrderId: tradeComment(trade._id) } });
+  const cmd = await enqueue(conn, trade._id, "open", { symbol, side: long ? "buy" : "sell", ...size, sl, tp, slPct: sl ? 0 : g.slPercent, tpPct: tp ? 0 : g.tpPercent, entry, gapPct: g.maxEntryGapPct, comment: tradeComment(trade._id) });
+  const res = await waitResult(cmd._id, 40000);
+  if (!res) return { tradeId: trade._id }; // no answer yet: the terminal may still confirm it; the sweep fails it after 2.5 minutes
+  const r = res.result || {};
+  if (res.status !== "done" || !r.ok) {
+    const why = r.message || "the terminal refused the order";
+    await Trade.updateOne({ _id: trade._id, status: "opening" }, { $set: { status: "failed", error: why } });
+    await notify(user, `❌ ${esc(symbol)}: ${esc(why)}. No trade was opened.`);
+    return { error: why };
+  }
+  log(`MT5 ${side} ${symbol} ${r.volume} lots @ ${r.price} (${conn.env})`);
+  await notify(user, `✅ <b>${long ? "Bought" : "Sold"} ${esc(symbol)}</b> on MetaTrader 5 (${conn.env === "demo" ? "demo" : "live"})\n${fx(r.volume, 2)} lots @ ${pp(r.price)}\nStop ${sl ? pp(sl) : `${g.slPercent}% away`}${tp ? ` · Target ${pp(tp)}` : ` · Target ${g.tpPercent}% away`}\nGroup: ${esc(g.title)}`);
+  return { tradeId: trade._id };
+}
+
 // The key is re-checked every few hours before trading: it must still trade and still be unable to withdraw.
 async function keyStillSafe(conn) {
   if (conn.checkedAt && Date.now() - new Date(conn.checkedAt).getTime() < KEY_RECHECK_MS) return true;
@@ -95,11 +140,18 @@ async function openTrade(signalId) {
   const market = g.market || "spot";
   const side = p?.side === "short" ? "short" : p?.side === "long" ? "long" : null;
   if (!side) return skip(sig, "no direction in the signal", user, false);
+  const conn = await Exchange.findOne({ _id: g.exchangeId, userId: user._id }).lean();
+  if (conn?.exchange === "mt5") { // 25 Nov: MetaTrader 5 through the EA
+    const r = await openMt5(sig, user, g, conn, p, pl, side).catch((e) => ({ error: e.message }));
+    if (r?.tradeId) await Signal.updateOne({ _id: sig._id }, { $set: { outcome: "traded", tradeId: r.tradeId } });
+    else if (r?.error) await Signal.updateOne({ _id: sig._id }, { $set: { outcome: "error", reason: r.error } });
+    return; // skip() already recorded a skipped signal
+  }
+  if (p.fx) return skip(sig, "a forex / gold signal; this group trades crypto (connect MetaTrader 5 to trade it)", user, false);
   // which legs this signal opens
   const legs = market === "spot" ? (side === "long" ? ["spot"] : []) : market === "futures" ? ["futures"] : side === "long" ? ["spot", "futures"] : ["futures"];
   if (!legs.length) return skip(sig, "a short signal; this group trades spot only (choose Futures or Both to trade shorts)", user, false);
 
-  const conn = await Exchange.findOne({ _id: g.exchangeId, userId: user._id }).lean();
   if (!conn || conn.status !== "ok") return skip(sig, "the exchange key for this group is not working", user);
   if (!(await keyStillSafe(conn))) return skip(sig, "the exchange key failed its safety check (it may allow withdrawals now). Check it in Exchanges", user);
 
@@ -459,7 +511,7 @@ async function manageFutures(t) {
 }
 
 async function monitor() {
-  const ids = (await Trade.find({ status: "open" }, { _id: 1 }).lean()).map((x) => String(x._id));
+  const ids = (await Trade.find({ status: "open", exchange: { $ne: "mt5" } }, { _id: 1 }).lean()).map((x) => String(x._id)); // MetaTrader 5 trades live on the broker (lib/mt5.js)
   await Promise.all(ids.map(async (id) => {
     if (busy.has(id)) return;
     busy.add(id);
@@ -472,7 +524,7 @@ async function monitor() {
 // ------------------------------------------------------------------ start-up recovery and main loop
 async function recover() {
   // trades left "opening" by a crash: adopt the order if it landed, otherwise mark it failed
-  for (const t of await Trade.find({ status: "opening" }).lean()) {
+  for (const t of await Trade.find({ status: "opening", exchange: { $ne: "mt5" } }).lean()) {
     try {
       const ex = await adapterOf(t);
       const info = ex && (await ex.info(t.symbol));
@@ -499,6 +551,7 @@ async function main() {
   log("copixio-trader up");
   await recover();
   setInterval(() => monitor().catch((e) => log("monitor:", e.message)), MONITOR_MS);
+  setInterval(() => mt5Sweep().catch((e) => log("mt5 sweep:", e.message)), 5000);
   const r = new Redis(process.env.REDIS_URL || "redis://127.0.0.1:6379"); // no command timeout: BRPOP blocks
   for (;;) {
     try {

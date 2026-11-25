@@ -25,6 +25,8 @@ const Rules = z.object({
   maxEntryGapPct: num(0, 50),
   market: z.enum(["spot", "futures", "both"]).optional().default("spot"), // 24 Nov
   leverage: z.coerce.number().int().min(1).max(20).optional().default(5),
+  lots: num(0.01, 100).optional().default(0.01), // 25 Nov: MetaTrader 5 lot size
+  riskUsd: num(0, 100000).optional().default(0), // MetaTrader 5: money to risk per trade (0 = use the lot size)
 });
 
 async function own(user, id) {
@@ -45,7 +47,8 @@ export async function PUT(req, { params }) {
   if (b.exchangeId) {
     const x = mongoose.isValidObjectId(b.exchangeId) ? await Exchange.findOne({ _id: b.exchangeId, userId: user._id }, { exchange: 1 }).lean() : null;
     if (!x) return bad("Choose one of your connected exchanges.");
-    if (b.market !== "spot" && !FUTURES_IDS.includes(x.exchange)) return bad(`Futures are not available on ${exchangeName(x.exchange)} in Copixio yet. Use Spot, or an exchange with futures (Binance, KuCoin, OKX, Bitget, HTX).`);
+    if (x.exchange === "mt5") b.market = "spot"; // MetaTrader 5 decides by the symbol; spot / futures do not apply
+    else if (b.market !== "spot" && !FUTURES_IDS.includes(x.exchange)) return bad(`Futures are not available on ${exchangeName(x.exchange)} in Copixio yet. Use Spot, or an exchange with futures (Binance, KuCoin, OKX, Bitget, HTX).`);
   }
   if (b.enabled) {
     if (!b.exchangeId) return bad("Choose the exchange this group trades on before switching it on.");

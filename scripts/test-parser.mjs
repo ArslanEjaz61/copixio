@@ -21,6 +21,16 @@ const cases = [
   ["ETH Entry: 3000 SL: 3100 TP: 2800", { base: "ETH", side: "short", stop: 3100, targets: [2800] }],
   ["GM fam, entry soon, stop by later for targets", { ok: false }],
   ["Hello Entry: 5 SL: 4 TP: 6", { ok: false }],
+  // 25 Nov: forex / gold / index signals (MetaTrader 5)
+  ["XAUUSD BUY NOW\nSL 2340\nTP1 2360\nTP2 2370", { base: "XAUUSD", side: "long", market: true, stop: 2340, targets: [2360, 2370], fx: true }],
+  ["GBPJPY SELL 191.50 SL 192.10 TP 190.20", { base: "GBPJPY", side: "short", entryLow: 191.5, stop: 192.1, targets: [190.2], fx: true }],
+  ["EUR/USD Buy @ 1.0850\nSL 1.0820\nTP1 1.0910", { base: "EURUSD", side: "long", entryLow: 1.085, stop: 1.082, targets: [1.091], fx: true }],
+  ["🔥 XAUUSD Buy 2,350.50 SL 2,340 TP 2,360", { base: "XAUUSD", side: "long", entryLow: 2350.5, stop: 2340, targets: [2360], fx: true }],
+  ["US30 SELL 38000 SL 38100 TP 37800", { base: "US30", side: "short", entryLow: 38000, stop: 38100, targets: [37800], fx: true }],
+  ["XAUUSD SELL\nSL 2360\nTP 2340", { base: "XAUUSD", side: "short", market: true, stop: 2360, targets: [2340], fx: true }],
+  ["AUDUSD Sell Limit 0.6600 SL 0.6650 TP 0.6500", { base: "AUDUSD", side: "short", entryLow: 0.66, stop: 0.665, fx: true }],
+  ["BTC/USDT long entry 60000 SL 59000 TP 62000", { base: "BTC", side: "long", entryLow: 60000, stop: 59000 }],
+  ["Gold is bullish today, EUR and USD both moving", { ok: false }],
 ];
 
 let fail = 0;

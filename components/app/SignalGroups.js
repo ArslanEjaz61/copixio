@@ -12,7 +12,7 @@ const tone = (s) => TONES[[...String(s)].reduce((a, c) => (a * 31 + c.charCodeAt
 const initials = (t) => String(t || "?").replace(/[^\p{L}\p{N} ]/gu, "").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "#";
 const Avatar = ({ title, size = 36 }) => <span className="av" style={{ background: tone(title), width: size, height: size }} aria-hidden="true">{initials(title)}</span>;
 
-const DEFAULTS = { sizeMode: "fixed", sizeUsdt: 20, sizePercent: 5, maxOpen: 3, slMode: "signal", slPercent: 3, tpMode: "signal", tpPercent: 4, tpSplit: "even", moveSlToEntry: true, dailyLossUsdt: 0, maxEntryGapPct: 2, market: "spot", leverage: 5 };
+const DEFAULTS = { sizeMode: "fixed", sizeUsdt: 20, sizePercent: 5, maxOpen: 3, slMode: "signal", slPercent: 3, tpMode: "signal", tpPercent: 4, tpSplit: "even", moveSlToEntry: true, dailyLossUsdt: 0, maxEntryGapPct: 2, market: "spot", leverage: 5, lots: 0.01, riskUsd: 0 };
 const MARKET_HINT = {
   spot: "Long (buy) signals are bought on spot. Short signals are skipped.",
   futures: "Long and short signals are opened on USDT futures with your leverage, isolated margin.",
@@ -25,16 +25,26 @@ function Seg({ value, onChange, options }) {
   );
 }
 
+function MtSize({ g, set }) {
+  return (
+    <>
+      <div className="field"><label>Lot size</label><input className="input num" type="number" min="0.01" step="0.01" value={g.lots} onChange={set("lots")} aria-label="Lot size" /><span className="hint">Fixed lots per trade (0.01 = micro lot). Used when the risk below is 0.</span></div>
+      <div className="field"><label>Or risk per trade</label><input className="input num" type="number" min="0" step="1" value={g.riskUsd} onChange={set("riskUsd")} aria-label="Risk per trade" /><span className="hint">In your account currency. 0 = use the lot size. Otherwise the EA sizes the lots so the stop loss loses this much.</span></div>
+    </>
+  );
+}
+
 // ---------------------------------------------------------------- the rules of one group
 function Rules({ group, exchanges, onSaved, onRemoved }) {
   const [g, setG] = useState({ ...DEFAULTS, ...group, exchangeId: group.exchangeId || exchanges[0]?.id || "" });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [dirty, setDirty] = useState(false);
+  const isMt5 = exchanges.find((x) => x.id === g.exchangeId)?.exchange === "mt5";
   const set = (k) => (v) => { setG((x) => ({ ...x, [k]: v?.target ? (v.target.type === "checkbox" ? v.target.checked : v.target.value) : v })); setDirty(true); };
 
   async function save(enabled) {
-    const nums = ["sizeUsdt", "sizePercent", "maxOpen", "slPercent", "tpPercent", "dailyLossUsdt", "maxEntryGapPct", "leverage"];
+    const nums = ["sizeUsdt", "sizePercent", "maxOpen", "slPercent", "tpPercent", "dailyLossUsdt", "maxEntryGapPct", "leverage", "lots", "riskUsd"];
     if (nums.some((k) => g[k] === "" || g[k] === null || Number.isNaN(Number(g[k])))) return setMsg({ bad: true, text: "Fill in every number (use 0 for “no limit”)." });
     setBusy(true); setMsg(null);
     const { id, chatId, title, kind, ...rules } = g; // eslint-disable-line no-unused-vars
@@ -68,6 +78,12 @@ function Rules({ group, exchanges, onSaved, onRemoved }) {
         </div>
       </section>
 
+      {isMt5 ? (
+        <section className="rsec">
+          <div className="rsec-t"><b>MetaTrader 5</b><span className="hint">Forex, gold, indices, crypto CFDs.</span></div>
+          <div className="rsec-b"><span className="hint">Long and short signals are both traded, one position per signal. The stop loss and the first target are set on the position at your broker. A crypto signal (BTC) goes to the broker&apos;s CFD (BTCUSD). Your MetaTrader 5 terminal with the Copixio EA must be running.</span></div>
+        </section>
+      ) : (
       <section className="rsec">
         <div className="rsec-t"><b>Market</b><span className="hint">Spot, futures, or both.</span></div>
         <div className="rsec-b two">
@@ -85,17 +101,18 @@ function Rules({ group, exchanges, onSaved, onRemoved }) {
             </div>
           )}
         </div>
-      </section>
+      </section>)}
 
       <section className="rsec">
         <div className="rsec-t"><b>Position size</b><span className="hint">How much each trade from this group uses.</span></div>
         <div className="rsec-b two">
-          <div className="field"><label>Size per trade</label>
+          {isMt5 && <MtSize g={g} set={set} />}
+          {!isMt5 && <div className="field"><label>Size per trade</label>
             <div className="input-group">
               <Seg value={g.sizeMode} onChange={set("sizeMode")} options={[["fixed", "USDT"], ["percent", "% of free"]]} />
               {g.sizeMode === "fixed" ? <input className="input num" type="number" min="1" step="1" value={g.sizeUsdt} onChange={set("sizeUsdt")} aria-label="USDT per trade" />
                 : <input className="input num" type="number" min="0.1" step="0.1" value={g.sizePercent} onChange={set("sizePercent")} aria-label="Percent of free USDT" />}
-            </div></div>
+            </div></div>}
           <div className="field"><label>Max open trades</label><input className="input num" type="number" min="1" max="100" value={g.maxOpen} onChange={set("maxOpen")} aria-label="Max open trades" /></div>
         </div>
       </section>
@@ -105,7 +122,7 @@ function Rules({ group, exchanges, onSaved, onRemoved }) {
         <div className="rsec-b two">
           <div className="field"><label>Stop from</label><Seg value={g.slMode} onChange={set("slMode")} options={[["signal", "The signal"], ["percent", "My own %"]]} /></div>
           <div className="field"><label>{g.slMode === "signal" ? "If the signal has none: % below entry" : "% below entry"}</label><input className="input num" type="number" min="0.1" step="0.1" value={g.slPercent} onChange={set("slPercent")} aria-label="Stop loss percent below entry" /></div>
-          <label className="check span2"><input type="checkbox" checked={!!g.moveSlToEntry} onChange={set("moveSlToEntry")} />After the first target, move the stop to the entry price (break-even)</label>
+          {!isMt5 && <label className="check span2"><input type="checkbox" checked={!!g.moveSlToEntry} onChange={set("moveSlToEntry")} />After the first target, move the stop to the entry price (break-even)</label>}
         </div>
       </section>
 
@@ -124,11 +141,11 @@ function Rules({ group, exchanges, onSaved, onRemoved }) {
         <div className="rsec-t"><b>Safety</b><span className="hint">Limits checked before every order.</span></div>
         <div className="rsec-b two">
           <div className="field"><label>Daily loss limit (USDT)</label><input className="input num" type="number" min="0" step="1" value={g.dailyLossUsdt} onChange={set("dailyLossUsdt")} aria-label="Daily loss limit in USDT" /><span className="hint">0 means no limit. When reached, the group stops until tomorrow (UTC).</span></div>
-          <div className="field"><label>Skip if price ran above entry by</label><div className="input-group"><input className="input num" type="number" min="0" step="0.1" value={g.maxEntryGapPct} onChange={set("maxEntryGapPct")} aria-label="Skip if price ran above entry by percent" /><span className="suffix">%</span></div><span className="hint">Avoids buying a pump that already happened.</span></div>
+          <div className="field"><label>Skip if price ran above entry by</label><div className="input-group"><input className="input num" type="number" min="0" step="0.1" value={g.maxEntryGapPct} onChange={set("maxEntryGapPct")} aria-label="Skip if price ran above entry by percent" /><span className="suffix">%</span></div><span className="hint">{isMt5 ? "For forex and gold use a small number such as 0.3." : "Avoids buying a pump that already happened."}</span></div>
         </div>
       </section>
 
-      <p className="hint" style={{ padding: "0 22px" }}>{g.market === "spot" ? "Spot trading: only long (buy) signals are traded. Short signals are skipped and shown in the signal log." : "Futures: for a short, the stop sits above the entry and the targets below it. The bot watches the stop every few seconds and closes at market."}</p>
+      <p className="hint" style={{ padding: "0 22px" }}>{isMt5 ? "MetaTrader 5: the order goes to your own terminal through the Copixio EA. Keep the terminal running; the stop loss and target stay on the broker even if it is closed." : g.market === "spot" ? "Spot trading: only long (buy) signals are traded. Short signals are skipped and shown in the signal log." : "Futures: for a short, the stop sits above the entry and the targets below it. The bot watches the stop every few seconds and closes at market."}</p>
       {msg && <div className={`note ${msg.bad ? "bad" : "ok"}`} role="status" style={{ margin: "0 22px" }}>{msg.text}</div>}
 
       <footer className="rules-f">

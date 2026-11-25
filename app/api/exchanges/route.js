@@ -32,6 +32,7 @@ export async function POST(req) {
   let b;
   try { b = Body.parse(await req.json()); }
   catch (e) { return bad(e?.issues?.[0]?.message || "Check the form and try again."); }
+  if (b.exchange === "mt5") return bad("MetaTrader 5 connects with the Copixio EA, not an API key. Use Connect MetaTrader 5.");
   const meta = exchangeMeta(b.exchange);
   if (meta.pass && !b.passphrase) return bad(`${meta.name} keys also need the passphrase you set when creating the key.`);
   if (!meta.longSecret && b.secret.length > 200) return bad("That secret is too long. Paste only the secret key.");

@@ -161,6 +161,10 @@ async function pollGroups() {
           if (s) await new Promise((r) => setTimeout(r, Math.min(s, 300) * 1000));
         }
       }
+      if (!entry.pollReady && entry.last.size >= entry.groups.size) {
+        entry.pollReady = true;
+        log(`poll ready ${userId}: ${[...entry.last].map(([c, id]) => `${c}@${id}`).join(" ")}`);
+      }
     }
   } finally { polling = false; }
 }

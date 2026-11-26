@@ -13,6 +13,7 @@
 try { process.loadEnvFile(new URL("../.env", import.meta.url)); } catch { /* env from pm2 */ }
 import Redis from "ioredis";
 import { db } from "../lib/db.js";
+import { redis as rds } from "../lib/redis.js";
 import { Exchange, Group, Signal, Trade, User, PLANS, planOf } from "../lib/models.js";
 import { adapterFor, floorTo } from "../lib/exchanges/adapter.js";
 import { futuresFor } from "../lib/exchanges/futures.js";
@@ -305,6 +306,8 @@ async function adoptFutures(tradeId, fill, info) {
 }
 
 // ------------------------------------------------------------------ managing open trades
+// 26 Nov: the price each check reads is kept 2 min for the Trades page's live P&L (/api/trades/live)
+const livePx = (t, px) => rds().set(`cx:px:${t._id}`, JSON.stringify({ px, at: Date.now() }), "EX", 120).catch(() => {});
 const busy = new Set();
 const connCache = new Map();
 async function adapterOf(t) {
@@ -390,6 +393,7 @@ async function manage(id) {
   const info = await ex.info(t.symbol);
   const px = await ex.price(t.symbol);
   if (!(px > 0) || !info) return;
+  livePx(t, px);
 
   // 1. the stop on the exchange filled (fully, or partly and stopped)
   if (t.stopOrderId) {
@@ -472,6 +476,7 @@ async function manageFutures(t) {
   const info = await fut.info(t.symbol);
   const px = await fut.price(t.symbol);
   if (!(px > 0) || !info) return;
+  livePx(t, px);
   const long = t.side !== "short";
   const cs = t.contractSize || info.contractSize || 1;
 

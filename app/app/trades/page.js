@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { Group, Signal, Trade } from "@/lib/models";
 import { currentUser } from "@/lib/auth";
 import CloseTrade from "@/components/app/CloseTrade";
+import { LivePnl, LivePrice } from "@/components/app/LivePnl";
 import { exchangeName } from "@/lib/exchanges/list";
 
 export const metadata = { title: "Trades" };
@@ -42,13 +43,15 @@ export default async function TradesPage({ searchParams }) {
         <section className="panel">
           {open.length === 0 ? <div className="empty"><b>No open trades</b><span>When a group you switched on posts a signal that fits its rules, the trade shows up here.</span></div> : (
             <div className="tbl"><table>
-              <thead><tr><th>Coin</th><th>Group</th><th className="r">Size</th><th className="r">Entry</th><th className="r">Stop</th><th>Targets</th><th>Opened</th><th></th></tr></thead>
+              <thead><tr><th>Coin</th><th>Group</th><th className="r">Size</th><th className="r">Entry</th><th className="r">Now</th><th className="r">P&amp;L (USDT)</th><th className="r">Stop</th><th>Targets</th><th>Opened</th><th></th></tr></thead>
               <tbody>{open.map((t) => (
                 <tr key={String(t._id)}>
                   <td><b>{t.base}</b><div className="hint">{exchangeName(t.exchange, t.env)}{t.market === "futures" ? ` · Futures ${t.side} ${t.leverage}x` : t.market === "cfd" ? ` · ${t.side}` : ""}</div></td>
                   <td>{groups.get(String(t.groupId)) || "–"}</td>
                   <td className="r num">{t.market === "cfd" ? `${n(t.qty)} lots` : n(t.costUsdt)}</td>
                   <td className="r num">{p(t.entryPrice)}</td>
+                  <td className="r">{t.market === "cfd" ? "–" : <LivePrice id={String(t._id)} />}</td>
+                  <td className="r">{t.market === "cfd" ? "–" : <LivePnl id={String(t._id)} />}</td>
                   <td className="r num neg">{p(t.stopPrice)}</td>
                   <td className="num">{(t.targets || []).map((x, i) => <span key={i} style={{ marginRight: 8, textDecoration: x.done ? "line-through" : "none", color: x.done ? "var(--profit)" : undefined }}>{p(x.price)}</span>)}</td>
                   <td className="hint">{when(t.openedAt || t.createdAt)}</td>

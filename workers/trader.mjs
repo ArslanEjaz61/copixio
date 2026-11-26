@@ -20,6 +20,7 @@ import { futuresFor } from "../lib/exchanges/futures.js";
 import { checkKeyFor } from "../lib/exchanges/check.js";
 import { exchangeName } from "../lib/exchanges/list.js";
 import { unseal } from "../lib/seal.js";
+import { isFav } from "../lib/favs.js";
 import { notify, esc } from "../lib/notify.js";
 import { bridgeOnline, enqueue, sweep as mt5Sweep, tradeComment, waitResult } from "../lib/mt5.js";
 
@@ -149,6 +150,8 @@ async function openTrade(signalId) {
     return; // skip() already recorded a skipped signal
   }
   if (p.fx) return skip(sig, "a forex / gold signal; this group trades crypto (connect MetaTrader 5 to trade it)", user, false);
+  // 27 Nov: "trade only my favourites" (Favourites page). Off by default; crypto only (MT5 returned above).
+  if (user.favOnly && !isFav(user.favCoins, p.base)) return skip(sig, `${p.base} is not in your favourites list`, user, false);
   // which legs this signal opens
   const legs = market === "spot" ? (side === "long" ? ["spot"] : []) : market === "futures" ? ["futures"] : side === "long" ? ["spot", "futures"] : ["futures"];
   if (!legs.length) return skip(sig, "a short signal; this group trades spot only (choose Futures or Both to trade shorts)", user, false);

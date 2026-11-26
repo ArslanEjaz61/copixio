@@ -6,6 +6,7 @@ export const NAV = [
   ["/app", "Dashboard"],
   ["/app/connections", "Connections"],
   ["/app/groups", "Signal groups"],
+  ["/app/favourites", "Favourites"],
   ["/app/trades", "Trades"],
   ["/app/billing", "Billing"],
   ["/app/settings", "Settings"],

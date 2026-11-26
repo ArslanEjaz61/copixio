@@ -1,13 +1,15 @@
 "use client";
 import { useEffect, useState } from "react";
 
-// One shared poll of /api/trades/live for every cell on the page (every 5 s, paused while the tab is hidden).
+// One shared poll of /api/trades/live for every cell on the page (every second, paused while the tab is hidden).
 const subs = new Set();
-let data = {}, timer = null;
+let data = {}, timer = null, inflight = false;
 async function pull() {
-  if (typeof document !== "undefined" && document.hidden) return;
+  if (inflight || (typeof document !== "undefined" && document.hidden)) return;
+  inflight = true;
   const r = await fetch("/api/trades/live", { cache: "no-store" }).catch(() => null);
   const j = r && r.ok ? await r.json().catch(() => null) : null;
+  inflight = false;
   if (!j?.rows) return;
   data = Object.fromEntries(j.rows.map((x) => [x.id, x]));
   subs.forEach((f) => f(data));
@@ -16,7 +18,7 @@ function useLive() {
   const [d, setD] = useState(data);
   useEffect(() => {
     subs.add(setD);
-    if (!timer) { pull(); timer = setInterval(pull, 5000); }
+    if (!timer) { pull(); timer = setInterval(pull, 1000); }
     return () => { subs.delete(setD); if (!subs.size) { clearInterval(timer); timer = null; } };
   }, []);
   return d;

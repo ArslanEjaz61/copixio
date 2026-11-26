@@ -36,10 +36,12 @@
 .empty { padding: 36px 20px; text-align: center; color: var(--muted); display: grid; gap: 6px; justify-items: center; }
 .empty b { color: var(--text); font-family: var(--font-display); font-size: 1.05rem; }
 @media (max-width: 960px) {
-  .ap { grid-template-columns: 1fr; }
+  .ap { grid-template-columns: minmax(0, 1fr); } /* 1fr alone grew with the widest child: every page was 740 px on a phone */
   .ap-side { display: none; }
-  .ap-mobilebar { display: flex; justify-content: space-between; align-items: center; background: var(--band); color: var(--band-text); padding: 12px 16px; position: sticky; top: 0; z-index: 10; }
-  .ap-mobilebar nav { display: flex; gap: 14px; font-size: .92rem; overflow-x: auto; }
+  .ap-mobilebar { display: flex; justify-content: space-between; align-items: center; gap: 16px; background: var(--band); color: var(--band-text); padding: 12px 16px; position: sticky; top: 0; z-index: 10; }
+  .ap-mobilebar > :first-child { flex: none; }
+  .ap-mobilebar nav { display: flex; gap: 14px; font-size: .92rem; overflow-x: auto; min-width: 0; scrollbar-width: none; -webkit-mask-image: linear-gradient(to right, #000 85%, transparent); mask-image: linear-gradient(to right, #000 85%, transparent); padding: 4px 24px 4px 0; }
+  .ap-mobilebar nav::-webkit-scrollbar { display: none; }
   .ap-mobilebar nav a { text-decoration: none; color: var(--band-muted); white-space: nowrap; }
   .ap-mobilebar nav a[aria-current="page"] { color: var(--band-text); }
   .ap-main { padding: 20px 16px 48px; }

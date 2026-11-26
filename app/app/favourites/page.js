@@ -10,7 +10,7 @@ export default async function FavouritesPage() {
   if (!user) redirect("/login"); // a stale cookie: the page renders beside the layout, so it checks too
   return (
     <>
-      <div className="ap-top"><div><h1>Favourites</h1><p>Pick the coins you want to trade. The bot ignores signals for every other coin.</p></div></div>
+      <div className="ap-top"><div><h1>Favourites</h1><p>Star the coins you want the bot to trade. Search any coin from Binance, KuCoin or your connected exchanges.</p></div></div>
       <FavouritesClient initialFavs={user.favCoins || []} initialOnly={!!user.favOnly} />
     </>
   );

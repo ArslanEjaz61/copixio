@@ -11,7 +11,7 @@
 .ap-user span { color: var(--band-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ap-logout { background: none; border: 0; padding: 0; color: var(--band-muted); font: 600 .9rem var(--font-body); cursor: pointer; text-align: left; text-decoration: underline; text-underline-offset: 3px; }
 .ap-logout:hover { color: var(--band-text); }
-.ap-main { padding: 28px 36px 64px; min-width: 0; display: grid; gap: 24px; align-content: start; }
+.ap-main { padding: 28px 36px 64px; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; align-content: start; }
 .ap-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
 .ap-top h1 { font-size: clamp(1.5rem, 2.2vw, 1.9rem); font-weight: 800; letter-spacing: -.02em; }
 .ap-top p { color: var(--muted); margin-top: 4px; }

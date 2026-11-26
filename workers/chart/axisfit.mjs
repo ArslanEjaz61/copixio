@@ -219,11 +219,22 @@ export async function readAxisLevels(buf) {
       const k = String(v);
       seen.set(k, { v, n: (seen.get(k)?.n || 0) + 1, len: k.replace(/\D/g, "").length });
     }
-    const pick = [...seen.values()].sort((a, c) => c.n - a.n || c.len - a.len)[0];
-    labels.push({ y: Math.round(y), color: b.color, v: pick ? fix(pick.v) : null, expected: fix(exp), tall: !!b.tall, raws: b.raws });
+    let pick = [...seen.values()].sort((a, c) => c.n - a.n || c.len - a.len)[0];
+    // 27 Nov (INJ): TradingView pushes crowded labels apart, so a label can sit up to a few label heights off its
+    // price. A clean reading with its decimal point ("5.017") is still taken there; a garbled one never is.
+    let shifted = false;
+    if (!pick) {
+      const wide = Math.abs(model.b) * Math.max(pxTol + 2, hMed * 3);
+      const plain = b.raws.filter((r) => /^\d+\.\d+$/.test(r)).map(Number).filter((v) => Math.abs(model.f(v) - model.f(exp)) <= wide);
+      const cnt = new Map(); for (const v of plain) cnt.set(v, (cnt.get(v) || 0) + 1);
+      const best = [...cnt].sort((a, c) => c[1] - a[1] || String(c[0]).length - String(a[0]).length)[0];
+      if (best && best[1] >= 2) { pick = { v: best[0] }; shifted = true; }
+    }
+    labels.push({ y: Math.round(y), color: b.color, v: pick ? fix(pick.v) : null, expected: fix(exp), tall: !!b.tall, shifted, raws: b.raws });
   }
   const at = (y) => fix(model.at(y));
-  return { labels, at, perPx: Math.abs(at(H / 2 + 1) - at(H / 2)), model: { kind: model.kind, inliers: model.n, pxTol: +pxTol.toFixed(1), dec }, bands: read.length, img: { rgb, W, H }, hMed };
+  const yOf = (v) => (model.f(v / scale) - model.a) / model.b; // the height a price belongs at
+  return { labels, at, yOf, perPx: Math.abs(at(H / 2 + 1) - at(H / 2)), model: { kind: model.kind, inliers: model.n, pxTol: +pxTol.toFixed(1), dec }, bands: read.length, img: { rgb, W, H }, hMed };
 }
 
 // The whole setup. A TradingView Long / Short Position tool on the chart (green box on red, boxread.findPosition):
@@ -274,7 +285,11 @@ async function axisSetupRaw(buf) {
     // the label on the edge; else (an edge hidden behind other drawings, a box cut by the chart's border) the nearest
     // label of the level's own colour on its own side of the entry, within a quarter of the tool's height
     const edge = (y, colors, side) => {
-      const l = r.labels.filter((x) => x.v && !x.tall && Math.abs(x.y - y) <= near).sort((a, b) => Math.abs(a.y - y) - Math.abs(b.y - y))[0];
+      // by the price a label carries (where that price belongs on the axis), not where the label happens to be
+      // drawn: crowded labels are pushed apart. A label of the level's own colour wins a near tie.
+      const reach = Math.max(near, r.hMed * 2.5);
+      const score = (x) => Math.abs(r.yOf(x.v) - y) + (colors && !colors.includes(x.color) ? r.hMed * 0.6 : 0);
+      const l = r.labels.filter((x) => x.v && !x.tall && Math.abs(r.yOf(x.v) - y) <= reach).sort((a, b) => score(a) - score(b))[0];
       if (l) return { v: l.v, exact: true };
       if (colors) {
         const c = r.labels.filter((x) => x.v && !x.tall && colors.includes(x.color) && Math.abs(x.y - y) <= span / 4 && (side < 0 ? x.y < pos.entryY : x.y > pos.entryY))
@@ -283,7 +298,7 @@ async function axisSetupRaw(buf) {
       }
       return { v: Number(r.at(y).toFixed(Math.min(10, dp))), exact: false };
     };
-    const tp = edge(pos.tpY, ["green", "teal"], long ? -1 : 1), entry = edge(pos.entryY), sl = edge(pos.slY, ["red"], long ? 1 : -1);
+    const tp = edge(pos.tpY, ["green", "teal"], long ? -1 : 1), entry = edge(pos.entryY, ["blue", "green", "teal", "grey"]), sl = edge(pos.slY, ["red"], long ? 1 : -1);
     if (long ? tp.v > entry.v && entry.v > sl.v : tp.v < entry.v && entry.v < sl.v)
       return { side: pos.side, entry: entry.v, sl: sl.v, tps: [tp.v], exact: { entry: entry.exact, sl: sl.exact, tp: tp.exact }, inliers: r.model.inliers, how: "position tool + axis" };
   }

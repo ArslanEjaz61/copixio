@@ -41,13 +41,21 @@ function readPicture(client, msg, caption) {
   return job;
 }
 
-async function onMessage(userId, ev) {
+const onMessage = (userId, ev) => handleMsg(userId, ev.message);
+
+// 26 Nov: the live update stream alone missed every post of a large channel (@Bitcoinhabebe, 6 posts in 26 h, 0 seen)
+// and anything posted while the listener restarted. Each message now passes here from the stream OR the poller below;
+// `seen` makes sure a message is read (and its picture OCR'd) once.
+async function handleMsg(userId, msg) {
   const entry = clients.get(userId);
-  const msg = ev.message;
   if (!entry || !msg) return;
   const chatId = String(utils.getPeerId(msg.peerId));
   const groupId = entry.groups.get(chatId);
   if (!groupId) return;
+  const key = `${chatId}:${msg.id}`;
+  if (entry.seen.has(key)) return;
+  entry.seen.add(key);
+  if (entry.seen.size > 5000) entry.seen.delete(entry.seen.values().next().value);
   const text = msg.message || "";
   const photo = !!msg.photo || msg.media?.className === "MessageMediaPhoto";
   if (!text.trim() && !photo) return;
@@ -78,7 +86,7 @@ async function connect(t) {
   try { session = unseal(t.sessionSealed); } catch { log(`session unreadable ${userId}`); return; }
   const client = new TelegramClient(new StringSession(session), apiId, apiHash, { connectionRetries: 10, autoReconnect: true, deviceModel: "Copixio", appVersion: "1.0" });
   client.setLogLevel("error");
-  const entry = { client, groups: await loadGroups(t.userId) };
+  const entry = { client, groups: await loadGroups(t.userId), seen: new Set(), last: new Map() };
   clients.set(userId, entry);
   try {
     await client.connect();
@@ -116,6 +124,47 @@ async function syncAll() {
   }
 }
 
+// ---- poller (26 Nov): every CX_POLL_MS (20 s) each switched-on group is asked for messages newer than the last one
+// seen. First look at a group (start, restart, newly added): only messages from the last CX_CATCHUP_S (300 s) that are
+// not stored yet are read, so a restart never loses a fresh signal and never trades an old one. CX_POLL=off: stream only.
+const POLL_MS = Number(process.env.CX_POLL_MS) || 20000, CATCHUP_S = Number(process.env.CX_CATCHUP_S) || 300;
+let polling = false;
+async function pollGroups() {
+  if (polling || process.env.CX_POLL === "off") return;
+  polling = true;
+  try {
+    for (const [userId, entry] of [...clients]) {
+      for (const chatId of [...entry.groups.keys()]) {
+        if (clients.get(userId) !== entry) break; // reconnected meanwhile
+        try {
+          const last = entry.last.get(chatId);
+          const msgs = last == null
+            ? await entry.client.getMessages(chatId, { limit: 10 })
+            : await entry.client.getMessages(chatId, { limit: 30, minId: last });
+          const ids = msgs.map((m) => m.id);
+          if (ids.length) entry.last.set(chatId, Math.max(last || 0, ...ids));
+          else if (last == null) entry.last.set(chatId, 0);
+          const fresh = Date.now() / 1000 - CATCHUP_S;
+          for (const m of [...msgs].sort((a, b) => a.id - b.id)) {
+            const key = `${chatId}:${m.id}`;
+            if (entry.seen.has(key)) continue;
+            if (last == null) {
+              if (m.date < fresh) continue;
+              if (await Signal.exists({ userId, chatId, messageId: String(m.id) })) { entry.seen.add(key); continue; }
+            }
+            log(`poll picked ${userId} ${chatId} msg ${m.id}${last == null ? " (catch-up)" : ""}`);
+            await handleMsg(userId, m).catch((e) => log("message:", e.message));
+          }
+        } catch (e) {
+          const s = Number(e?.seconds) || 0; // FLOOD_WAIT: back off as long as Telegram asks
+          log(`poll ${userId} ${chatId}: ${e?.errorMessage || e?.message}`);
+          if (s) await new Promise((r) => setTimeout(r, Math.min(s, 300) * 1000));
+        }
+      }
+    }
+  } finally { polling = false; }
+}
+
 // ---- notification bot: "/start <code>" links the chat to the user who opened Settings
 let botOffset = 0;
 async function pollBot() {
@@ -137,6 +186,7 @@ async function main() {
   log("copixio-listener up");
   await syncAll();
   setInterval(() => syncAll().catch((e) => log("sync:", e.message)), 60000);
+  setInterval(() => pollGroups().catch((e) => log("poll:", e.message)), POLL_MS);
   const sub = new Redis(process.env.REDIS_URL || "redis://127.0.0.1:6379");
   await sub.subscribe("cx:changed");
   sub.on("message", async (_c, raw) => {

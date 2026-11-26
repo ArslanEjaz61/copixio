@@ -63,9 +63,9 @@ async function readBox(img, box) {
 }
 
 // the boxes along one axis strip [xa, xb)
-function findBoxes(img, xa, xb) {
+function findBoxes(img, xa, xb, runFrac = 0.045) {
   const { data, W, H } = img;
-  const minRun = Math.max(24, Math.round(W * 0.045)), gapMax = Math.max(6, Math.round(W * 0.015));
+  const minRun = Math.max(runFrac < 0.045 ? 14 : 24, Math.round(W * runFrac)), gapMax = Math.max(6, Math.round(W * 0.015));
   const rows = [];
   for (let y = 0; y < H; y++) {
     let best = null, cur = null;
@@ -91,14 +91,18 @@ function findBoxes(img, xa, xb) {
   return groups.map((g) => ({ c: g.c, y0: g.y0, y1: g.y1, x0: median(g.rows.map((r) => r.start)), x1: median(g.rows.map((r) => r.end)) }));
 }
 
-export async function readLineLabels(buf) {
+// opts.runFrac: the shortest coloured run that is a label, as a share of the width (27 Nov: axisfit.mjs asks 0.022, the
+// narrow labels of small phone / preview pictures; the default stays for the old caller)
+export async function readLineLabels(buf, opts = {}) {
   const { data, info } = await sharp(buf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const W = info.width, H = info.height, img = { data, W, H };
   const minH = Math.max(9, Math.round(H * 0.009));
-  const strips = [[Math.floor(W * 0.6), W], [0, Math.ceil(W * 0.4)]];
+  const strips = opts.fromX ? [[Math.max(0, Math.floor(opts.fromX)), W]] : [[Math.floor(W * 0.6), W], [0, Math.ceil(W * 0.4)]];
   let best = null;
   for (const [xa, xb] of strips) {
-    const boxes = findBoxes(img, xa, xb).filter((b) => b.y1 - b.y0 + 1 >= minH && b.y1 - b.y0 < H * 0.08 && b.x1 - b.x0 >= 24);
+    // opts.minRight: only boxes reaching that far right (labels sit on the axis), and at most opts.maxBoxes of them --
+    // filtered before any OCR (27 Nov: an enlarged small picture gave hundreds of candle-sized boxes, 15+ minutes)
+    const boxes = findBoxes(img, xa, xb, opts.runFrac).filter((b) => b.y1 - b.y0 + 1 >= minH && b.y1 - b.y0 < H * 0.08 && b.x1 - b.x0 >= 24 && (!opts.minRight || b.x1 >= W * opts.minRight)).slice(0, opts.maxBoxes || Infinity);
     if (!boxes.length) continue;
     const labels = [];
     const hMed = median(boxes.map((b) => b.y1 - b.y0 + 1));
@@ -107,12 +111,13 @@ export async function readLineLabels(buf) {
       // carries the number (measured against the other boxes: phone screenshots have big labels everywhere)
       const tall = boxes.length > 1 && b.y1 - b.y0 + 1 > hMed * 1.6;
       const r = await readBox(img, tall ? { ...b, y1: b.y0 + Math.round((b.y1 - b.y0) / 2) } : b);
-      if (r) labels.push({ y: Math.round((b.y0 + b.y1) / 2), v: r.v, votes: r.votes, cands: r.cands, color: b.c, tall });
+      // 27 Nov: a box whose digits did not read is kept too (v null, no cands): axisfit.mjs reads it again
+      labels.push({ y: Math.round((b.y0 + b.y1) / 2), v: r?.v ?? null, votes: r?.votes ?? 0, cands: r?.cands ?? [], color: b.c, tall, box: { x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1 } });
     }
     labels.sort((a, b) => a.y - b.y);
-    if (!best || labels.length > best.labels.length) best = { labels, boxes: boxes.length, strip: xa ? "right" : "left" };
+    if (!best || labels.filter((l) => l.v).length > best.labels.filter((l) => l.v).length) best = { labels, boxes: boxes.length, strip: xa ? "right" : "left" };
   }
-  if (!best || !best.labels.length) return { error: "no readable price labels on the chart's axis", ...(best || {}) };
+  if (!best || !best.labels.some((l) => l.v)) return { error: "no readable price labels on the chart's axis", ...(best || {}) };
   return best;
 }
 

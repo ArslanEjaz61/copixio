@@ -3,6 +3,9 @@
 //   1. caption coin ("btc", "$ZIL", "JCT") -- a one-word caption names the coin, whatever the chart's title says
 //   2. "$COIN" + TradingView labels (purple TP / grey entry / blue SL)            -> posread
 //   3. ENTRY / SL / STOP / TP words printed on the chart                            -> chartread
+//   3b. (27 Nov) the exact numbers on the price axis: every axis line read on its own, the straight line they sit
+//       on fitted, each coloured label / Position tool edge kept only where its digits sit on that line; real-setup
+//       checks against the live price (entry within 15%, stop 0.3-50%, target 0.3-300%) -> axisfit. CHART_AXIS=off skips
 //   4. TradingView Position tool (green + red boxes) mapped through the price axis -> boxread (entry within 25% of live)
 //   5. coloured price labels on the axis: above the price = targets, red below = stop -> linelabels
 //   6. level lines calibrated on the chart's own daily candles                        -> calibread
@@ -16,6 +19,7 @@ import { readLineLabels, levelsFromLabels } from "./linelabels.mjs";
 import { readCalibrated } from "./calibread.mjs";
 import { readPosition } from "./posread.mjs";
 import { readChart } from "./vxread.mjs";
+import { axisSetup } from "./axisfit.mjs";
 
 const getJ = async (u, ms = 10000) => { const r = await fetch(u, { signal: AbortSignal.timeout(ms) }); if (!r.ok) throw new Error(`${r.status}`); return r.json(); };
 
@@ -107,6 +111,16 @@ async function toParsed(r) {
   return { ok: true, base, side, entryLow: entry, entryHigh: entry, market: !entry, targets, stop, chart: r.how || "chart" };
 }
 
+// the price-axis reader with the live price (its own 45 s budget, 50 s hard stop). CHART_AXIS=off: never
+async function axisTry(buf, symbol) {
+  if (process.env.CHART_AXIS === "off") return { reason: "off" };
+  const px = await livePrice(symbol).catch(() => null);
+  if (!(px > 0)) return { reason: `${symbol}: no live price for the axis check` };
+  let t;
+  return Promise.race([axisSetup(buf, { refPrice: px }), new Promise((res) => { t = setTimeout(() => res({ reason: "axis reading took over 50 s" }), 50000); })])
+    .catch((e) => ({ reason: `axis reader: ${e.message}` })).finally(() => clearTimeout(t));
+}
+
 export async function chartSignal(buf, caption = "", postedAtMs = Date.now()) {
   await loadSymbols();
   if (!syms) return { ok: false, reason: "coin list not readable right now" };
@@ -134,10 +148,23 @@ export async function chartSignal(buf, caption = "", postedAtMs = Date.now()) {
   let r;
   try { r = await readChartSetup(buf, isSymbol, caption || ""); } catch (e) { return { ok: false, reason: `chart not readable (${e.message})` }; }
   if (cap && r.symbol !== cap) r = r.reason ? { reason: `${cap}: no ENTRY / SL / TP labels readable on the chart`, symbol: cap } : { ...r, symbol: cap };
-  if (!r.reason) return toParsed({ ...r, how: "chart text" });
+  if (!r.reason) {
+    if (r.sl && r.tps.length) return toParsed({ ...r, how: "chart text" });
+    // 27 Nov: the text gave part of the setup (phone charts: "ENTRY" and "TP" tags read, the "SL" tag not): the rest
+    // from the price axis, when both agree on what they both read (within 2%)
+    const ax = await axisTry(buf, r.symbol);
+    const agree = (a, b) => a == null || b == null || Math.abs(a / b - 1) <= 0.02;
+    if (!ax.reason && agree(r.entry, ax.entry) && agree(r.tps[0], ax.tps[0]) && (r.side === ax.side))
+      return toParsed({ symbol: r.symbol, side: r.side, entry: r.entry ?? ax.entry, sl: r.sl ?? ax.sl, tps: r.tps.length ? r.tps : ax.tps, how: "chart text + axis" });
+    return toParsed({ ...r, how: "chart text" });
+  }
   const symbol = r.symbol || cap || (tag && isSymbol(`${tag[1]}USDT`) ? `${tag[1]}USDT` : null);
   if (!symbol) return { ok: false, reason: `picture: ${[...vxWhy, r.reason].join("; ")}` };
   const why = [...vxWhy, r.reason];
+  // 3b. the price axis, exact numbers (axisfit.mjs)
+  const ax = await axisTry(buf, symbol);
+  if (!ax.reason) return toParsed({ symbol, side: ax.side, entry: ax.entry, sl: ax.sl, tps: ax.tps, how: ax.exact.sl && ax.exact.tp ? "axis labels (exact)" : "axis line" });
+  why.push(`axis: ${ax.reason}`);
   // 4. Position tool  5. axis labels
   const br = await boxSetup(buf, symbol).catch((e) => ({ reason: `position tool not readable (${e.message})` }));
   if (!br.reason && !br.directionOnly) return toParsed(br);

@@ -42,7 +42,7 @@ function runs(colCls, H, c, gap) {
   return best;
 }
 
-function findPosition(img) {
+export function findPosition(img) {
   const { data, W, H } = img;
   const gap = 3, minG = Math.max(8, Math.round(H * 0.03)), minR = Math.max(4, Math.round(H * 0.012)), touch = Math.max(6, Math.round(H * 0.03)); // 10 Nov: the entry-zone band between the boxes can be 8+ px on a small copy
   const cols = [];
